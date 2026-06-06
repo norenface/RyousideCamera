@@ -88,17 +88,10 @@ class DualCameraManager(private val context: Context) {
     }
 
     private fun bindCameras(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
-        val concurrentInfoSets = provider.availableConcurrentCameraInfos
-        val supportsConcurrent = concurrentInfoSets.any { infoSet ->
-            infoSet.any { it.lensFacing == CameraSelector.LENS_FACING_BACK } &&
-            infoSet.any { it.lensFacing == CameraSelector.LENS_FACING_FRONT }
-        }
-
-        if (supportsConcurrent) {
-            tryConcurrentBinding(provider, lifecycleOwner)
-        } else {
-            fallbackBinding(provider, lifecycleOwner)
-        }
+        // Always attempt concurrent binding; the try-catch chain falls back gracefully
+        // rather than skipping based on availableConcurrentCameraInfos which is often
+        // incomplete on devices that actually support simultaneous front+back capture.
+        tryConcurrentBinding(provider, lifecycleOwner)
     }
 
     // SingleCameraConfig is @RestrictTo(LIBRARY_GROUP) in camera-lifecycle, so we use
