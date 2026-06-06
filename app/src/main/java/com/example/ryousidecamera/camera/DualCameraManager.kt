@@ -11,7 +11,6 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.lifecycle.SingleCameraConfig
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -32,6 +31,7 @@ class DualCameraManager(private val context: Context) {
 
     companion object {
         private const val TAG = "DualCameraManager"
+        private const val SINGLE_CAMERA_CONFIG_CLASS = "androidx.camera.lifecycle.SingleCameraConfig"
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -88,7 +88,6 @@ class DualCameraManager(private val context: Context) {
     }
 
     private fun bindCameras(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
-        // Try concurrent camera binding (front + back simultaneously)
         val concurrentInfoSets = provider.availableConcurrentCameraInfos
         val supportsConcurrent = concurrentInfoSets.any { infoSet ->
             infoSet.any { it.lensFacing == CameraSelector.LENS_FACING_BACK } &&
@@ -100,6 +99,31 @@ class DualCameraManager(private val context: Context) {
         } else {
             fallbackBinding(provider, lifecycleOwner)
         }
+    }
+
+    // SingleCameraConfig is @RestrictTo(LIBRARY_GROUP) in camera-lifecycle, so we use
+    // reflection to access it at runtime while avoiding a compile-time dependency.
+    private fun makeSingleCameraConfig(
+        cameraSelector: CameraSelector,
+        useCaseGroup: UseCaseGroup,
+        lifecycleOwner: LifecycleOwner
+    ): Any {
+        val clazz = Class.forName(SINGLE_CAMERA_CONFIG_CLASS)
+        val ctor = clazz.getConstructor(
+            CameraSelector::class.java,
+            UseCaseGroup::class.java,
+            LifecycleOwner::class.java
+        )
+        return ctor.newInstance(cameraSelector, useCaseGroup, lifecycleOwner)
+    }
+
+    private fun bindConcurrent(provider: ProcessCameraProvider, configs: List<Any>) {
+        val method = provider.javaClass.methods.first { m ->
+            m.name == "bindToLifecycle" &&
+            m.parameterCount == 1 &&
+            m.parameterTypes[0] == List::class.java
+        }
+        method.invoke(provider, configs)
     }
 
     private fun tryConcurrentBinding(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
@@ -115,14 +139,10 @@ class DualCameraManager(private val context: Context) {
                 .addUseCase(frontVideoCapture!!)
                 .build()
 
-            val backConfig = SingleCameraConfig(
-                CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner
-            )
-            val frontConfig = SingleCameraConfig(
-                CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner
-            )
+            val backConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner)
+            val frontConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner)
 
-            provider.bindToLifecycle(listOf(backConfig, frontConfig))
+            bindConcurrent(provider, listOf(backConfig, frontConfig))
             isConcurrentMode = true
             isFrontVideoEnabled = true
             Log.d(TAG, "Concurrent camera binding succeeded (video on both)")
@@ -144,14 +164,10 @@ class DualCameraManager(private val context: Context) {
                 .addUseCase(frontImageCapture!!)
                 .build()
 
-            val backConfig = SingleCameraConfig(
-                CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner
-            )
-            val frontConfig = SingleCameraConfig(
-                CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner
-            )
+            val backConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner)
+            val frontConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner)
 
-            provider.bindToLifecycle(listOf(backConfig, frontConfig))
+            bindConcurrent(provider, listOf(backConfig, frontConfig))
             isConcurrentMode = true
             isFrontVideoEnabled = false
             Log.d(TAG, "Concurrent binding without front video succeeded")
