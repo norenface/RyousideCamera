@@ -9,7 +9,9 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.lifecycle.SingleCameraConfig
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
@@ -69,11 +71,9 @@ class DualCameraManager(private val context: Context) {
         frontPreview = Preview.Builder().build().also { it.setSurfaceProvider(frontPreviewView.surfaceProvider) }
 
         backImageCapture = ImageCapture.Builder()
-            .setOutputImageFormat(ImageCapture.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
         frontImageCapture = ImageCapture.Builder()
-            .setOutputImageFormat(ImageCapture.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
 
@@ -104,21 +104,21 @@ class DualCameraManager(private val context: Context) {
 
     private fun tryConcurrentBinding(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
         try {
-            val backGroup = androidx.camera.core.UseCaseGroup.Builder()
+            val backGroup = UseCaseGroup.Builder()
                 .addUseCase(backPreview!!)
                 .addUseCase(backImageCapture!!)
                 .addUseCase(backVideoCapture!!)
                 .build()
-            val frontGroup = androidx.camera.core.UseCaseGroup.Builder()
+            val frontGroup = UseCaseGroup.Builder()
                 .addUseCase(frontPreview!!)
                 .addUseCase(frontImageCapture!!)
                 .addUseCase(frontVideoCapture!!)
                 .build()
 
-            val backConfig = androidx.camera.lifecycle.SingleCameraConfig(
+            val backConfig = SingleCameraConfig(
                 CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner
             )
-            val frontConfig = androidx.camera.lifecycle.SingleCameraConfig(
+            val frontConfig = SingleCameraConfig(
                 CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner
             )
 
@@ -134,20 +134,20 @@ class DualCameraManager(private val context: Context) {
 
     private fun tryConcurrentNoFrontVideo(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
         try {
-            val backGroup = androidx.camera.core.UseCaseGroup.Builder()
+            val backGroup = UseCaseGroup.Builder()
                 .addUseCase(backPreview!!)
                 .addUseCase(backImageCapture!!)
                 .addUseCase(backVideoCapture!!)
                 .build()
-            val frontGroup = androidx.camera.core.UseCaseGroup.Builder()
+            val frontGroup = UseCaseGroup.Builder()
                 .addUseCase(frontPreview!!)
                 .addUseCase(frontImageCapture!!)
                 .build()
 
-            val backConfig = androidx.camera.lifecycle.SingleCameraConfig(
+            val backConfig = SingleCameraConfig(
                 CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner
             )
-            val frontConfig = androidx.camera.lifecycle.SingleCameraConfig(
+            val frontConfig = SingleCameraConfig(
                 CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner
             )
 

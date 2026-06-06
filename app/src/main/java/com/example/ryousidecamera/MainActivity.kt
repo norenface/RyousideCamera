@@ -48,7 +48,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         cameraManager = DualCameraManager(this)
-        compositor = VideoCompositor(this)
 
         if (PermissionHelper.allGranted(this)) {
             startCamera()
