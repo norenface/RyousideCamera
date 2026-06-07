@@ -35,20 +35,25 @@ class DualCameraManager(private val context: Context) {
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var boundLifecycleOwner: LifecycleOwner? = null
 
     // Use cases – back camera
     private var backPreview: Preview? = null
+    private var backPreviewView: PreviewView? = null
     private var backImageCapture: ImageCapture? = null
     private var backVideoCapture: VideoCapture<Recorder>? = null
 
     // Use cases – front camera
     private var frontPreview: Preview? = null
+    private var frontPreviewView: PreviewView? = null
     private var frontImageCapture: ImageCapture? = null
     private var frontVideoCapture: VideoCapture<Recorder>? = null
 
     var isConcurrentMode = false
         private set
     var isFrontVideoEnabled = false
+        private set
+    var hasFrontCamera = false
         private set
 
     private var backRecording: Recording? = null
@@ -65,6 +70,9 @@ class DualCameraManager(private val context: Context) {
             }
         }
         cameraProvider = provider
+        boundLifecycleOwner = lifecycleOwner
+        this.backPreviewView = backPreviewView
+        this.frontPreviewView = frontPreviewView
         provider.unbindAll()
 
         backPreview = Preview.Builder().build().also { it.setSurfaceProvider(backPreviewView.surfaceProvider) }
@@ -88,9 +96,6 @@ class DualCameraManager(private val context: Context) {
     }
 
     private fun bindCameras(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
-        // Always attempt concurrent binding; the try-catch chain falls back gracefully
-        // rather than skipping based on availableConcurrentCameraInfos which is often
-        // incomplete on devices that actually support simultaneous front+back capture.
         tryConcurrentBinding(provider, lifecycleOwner)
     }
 
@@ -111,11 +116,17 @@ class DualCameraManager(private val context: Context) {
     }
 
     private fun bindConcurrent(provider: ProcessCameraProvider, configs: List<Any>) {
-        val method = provider.javaClass.methods.first { m ->
-            m.name == "bindToLifecycle" &&
-            m.parameterCount == 1 &&
-            m.parameterTypes[0] == List::class.java
-        }
+        // Search ProcessCameraProvider's declared class hierarchy, not just the concrete subclass,
+        // to reliably find the overloaded bindToLifecycle(List) method.
+        val method = generateSequence<Class<*>>(ProcessCameraProvider::class.java) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }
+            .firstOrNull { m ->
+                m.name == "bindToLifecycle" &&
+                m.parameterCount == 1 &&
+                m.parameterTypes[0].isAssignableFrom(List::class.java)
+            }
+            ?: throw NoSuchMethodException("bindToLifecycle(List) not found on ProcessCameraProvider")
+        method.isAccessible = true
         method.invoke(provider, configs)
     }
 
@@ -138,6 +149,7 @@ class DualCameraManager(private val context: Context) {
             bindConcurrent(provider, listOf(backConfig, frontConfig))
             isConcurrentMode = true
             isFrontVideoEnabled = true
+            hasFrontCamera = true
             Log.d(TAG, "Concurrent camera binding succeeded (video on both)")
         } catch (e: Exception) {
             Log.w(TAG, "Full concurrent binding failed, retrying without front video: $e")
@@ -163,6 +175,7 @@ class DualCameraManager(private val context: Context) {
             bindConcurrent(provider, listOf(backConfig, frontConfig))
             isConcurrentMode = true
             isFrontVideoEnabled = false
+            hasFrontCamera = true
             Log.d(TAG, "Concurrent binding without front video succeeded")
         } catch (e: Exception) {
             Log.w(TAG, "Concurrent binding failed entirely, falling back to back camera only: $e")
@@ -179,7 +192,10 @@ class DualCameraManager(private val context: Context) {
             )
             isConcurrentMode = false
             isFrontVideoEnabled = false
-            Log.d(TAG, "Fallback to back camera only")
+            hasFrontCamera = try {
+                provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
+            } catch (e: Exception) { false }
+            Log.d(TAG, "Fallback to back camera only (hasFrontCamera=$hasFrontCamera)")
         } catch (e: Exception) {
             Log.e(TAG, "Camera binding failed: $e")
         }
@@ -187,11 +203,83 @@ class DualCameraManager(private val context: Context) {
 
     suspend fun capturePhoto(): Pair<Bitmap, Bitmap?> {
         val executor = ContextCompat.getMainExecutor(context)
+        return if (isConcurrentMode) {
+            val backBitmap = captureImage(backImageCapture!!, executor, mirrorHorizontal = false)
+            val frontBitmap = runCatching {
+                captureImage(frontImageCapture!!, executor, mirrorHorizontal = true)
+            }.getOrNull()
+            Pair(backBitmap, frontBitmap)
+        } else if (hasFrontCamera) {
+            capturePhotoSequential(executor)
+        } else {
+            val backBitmap = captureImage(backImageCapture!!, executor, mirrorHorizontal = false)
+            Pair(backBitmap, null)
+        }
+    }
+
+    // On devices without concurrent camera support, capture back then rebind to front to
+    // capture front, then rebind back. Sequential, not simultaneous.
+    private suspend fun capturePhotoSequential(executor: Executor): Pair<Bitmap, Bitmap?> {
+        val provider = cameraProvider ?: return Pair(
+            captureImage(backImageCapture!!, executor, mirrorHorizontal = false), null
+        )
+        val lifecycleOwner = boundLifecycleOwner ?: return Pair(
+            captureImage(backImageCapture!!, executor, mirrorHorizontal = false), null
+        )
+
+        // Step 1: capture back
         val backBitmap = captureImage(backImageCapture!!, executor, mirrorHorizontal = false)
-        val frontBitmap = if (isConcurrentMode) {
-            runCatching { captureImage(frontImageCapture!!, executor, mirrorHorizontal = true) }.getOrNull()
-        } else null
-        return Pair(backBitmap, frontBitmap)
+
+        // Step 2: switch to front camera
+        val frontCap = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+        provider.unbindAll()
+        try {
+            provider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_FRONT_CAMERA,
+                frontCap
+            )
+            val frontBitmap = runCatching {
+                captureImage(frontCap, executor, mirrorHorizontal = true)
+            }.getOrNull()
+
+            // Step 3: restore back camera with all use cases
+            provider.unbindAll()
+            backPreview = Preview.Builder().build().also {
+                it.setSurfaceProvider(backPreviewView?.surfaceProvider)
+            }
+            backImageCapture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build()
+            provider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                backPreview, backImageCapture, backVideoCapture
+            )
+            return Pair(backBitmap, frontBitmap)
+        } catch (e: Exception) {
+            Log.e(TAG, "Sequential capture failed at front step: $e")
+            // Restore back camera
+            try {
+                provider.unbindAll()
+                backPreview = Preview.Builder().build().also {
+                    it.setSurfaceProvider(backPreviewView?.surfaceProvider)
+                }
+                backImageCapture = ImageCapture.Builder()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .build()
+                provider.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    backPreview, backImageCapture, backVideoCapture
+                )
+            } catch (ex: Exception) {
+                Log.e(TAG, "Failed to restore back camera: $ex")
+            }
+            return Pair(backBitmap, null)
+        }
     }
 
     private suspend fun captureImage(

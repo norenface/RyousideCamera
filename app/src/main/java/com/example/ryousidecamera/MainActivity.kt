@@ -87,8 +87,9 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
             if (!cameraManager.isConcurrentMode) {
+                // Hide live PiP preview when simultaneous streaming isn't supported,
+                // but still allow sequential front+back photo capture if front exists.
                 binding.pipContainer.visibility = View.GONE
-                Toast.makeText(this@MainActivity, R.string.dual_camera_unavailable, Toast.LENGTH_LONG).show()
             }
         }
     }
