@@ -21,6 +21,7 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.util.concurrent.Executor
@@ -112,20 +113,23 @@ class DualCameraManager(private val context: Context) {
             UseCaseGroup::class.java,
             LifecycleOwner::class.java
         )
+        ctor.isAccessible = true
         return ctor.newInstance(cameraSelector, useCaseGroup, lifecycleOwner)
     }
 
     private fun bindConcurrent(provider: ProcessCameraProvider, configs: List<Any>) {
-        // Search ProcessCameraProvider's declared class hierarchy, not just the concrete subclass,
+        // Search both the runtime class and ProcessCameraProvider's static hierarchy
         // to reliably find the overloaded bindToLifecycle(List) method.
-        val method = generateSequence<Class<*>>(ProcessCameraProvider::class.java) { it.superclass }
+        val method = (sequenceOf(provider.javaClass) +
+                generateSequence<Class<*>>(ProcessCameraProvider::class.java) { it.superclass })
+            .distinct()
             .flatMap { it.declaredMethods.asSequence() }
             .firstOrNull { m ->
                 m.name == "bindToLifecycle" &&
                 m.parameterCount == 1 &&
-                m.parameterTypes[0].isAssignableFrom(List::class.java)
+                m.parameterTypes[0] == List::class.java
             }
-            ?: throw NoSuchMethodException("bindToLifecycle(List) not found on ProcessCameraProvider")
+            ?: throw NoSuchMethodException("bindToLifecycle(List) not found on ${provider.javaClass.name}")
         method.isAccessible = true
         method.invoke(provider, configs)
     }
@@ -230,20 +234,25 @@ class DualCameraManager(private val context: Context) {
         // Step 1: capture back
         val backBitmap = captureImage(backImageCapture!!, executor, mirrorHorizontal = false)
 
-        // Step 2: switch to front camera
+        // Step 2: switch to front camera (bind with Preview so the sensor warms up)
         val frontCap = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
+        val frontPrev = Preview.Builder().build().also {
+            it.setSurfaceProvider(frontPreviewView?.surfaceProvider)
+        }
         provider.unbindAll()
         try {
             provider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_FRONT_CAMERA,
-                frontCap
+                frontPrev, frontCap
             )
+            // Wait for the front camera sensor to open before taking the picture
+            delay(600)
             val frontBitmap = runCatching {
                 captureImage(frontCap, executor, mirrorHorizontal = true)
-            }.getOrNull()
+            }.onFailure { Log.e(TAG, "Sequential front capture error: $it") }.getOrNull()
 
             // Step 3: restore back camera with all use cases
             provider.unbindAll()

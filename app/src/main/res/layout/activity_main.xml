@@ -37,6 +37,18 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="@drawable/pip_border" />
+
+        <!-- Shown when live front preview isn't available (sequential mode) -->
+        <TextView
+            android:id="@+id/pipPlaceholder"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="フロント\n(撮影時合成)"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            android:background="#99000000"
+            android:visibility="gone" />
     </FrameLayout>
 
     <!-- Recording timer -->
