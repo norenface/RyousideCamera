@@ -18,8 +18,13 @@ object PhotoCombiner {
     suspend fun combine(
         context: Context,
         backBitmap: Bitmap,
-        frontBitmap: Bitmap
+        frontBitmap: Bitmap?
     ): Uri = withContext(Dispatchers.Default) {
+        // If front capture failed, just save the back image without any PiP overlay
+        if (frontBitmap == null) {
+            return@withContext saveToGallery(context, backBitmap)
+        }
+
         val outWidth = backBitmap.width
         val outHeight = backBitmap.height
 

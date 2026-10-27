@@ -24,6 +24,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.Observer
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -239,14 +240,16 @@ class DualCameraManager(private val context: Context) {
         // Step 1: capture back (camera already open)
         val backBitmap = captureImage(backImageCapture!!, executor, mirrorHorizontal = false)
 
-        // Step 2: switch to front camera
+        // Step 2: release back camera; give hardware time to free the sensor
+        provider.unbindAll()
+        delay(400)
+
         val frontCap = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
         val frontPrev = Preview.Builder().build().also {
             it.setSurfaceProvider(frontPreviewView?.surfaceProvider)
         }
-        provider.unbindAll()
 
         val frontBitmap = try {
             val cam = provider.bindToLifecycle(
@@ -254,20 +257,24 @@ class DualCameraManager(private val context: Context) {
                 CameraSelector.DEFAULT_FRONT_CAMERA,
                 frontPrev, frontCap
             )
-            // Wait until the front camera sensor is confirmed OPEN (3 s timeout)
-            val opened = withTimeoutOrNull(3_000L) { waitForCameraOpen(cam) } != null
-            if (!opened) Log.w(TAG, "Front camera open timed out, attempting capture anyway")
+            // Wait until the front camera sensor is confirmed OPEN (4 s timeout)
+            val opened = withTimeoutOrNull(4_000L) { waitForCameraOpen(cam) } != null
+            if (!opened) {
+                Log.w(TAG, "Front camera open timed out — adding extra 1 s delay")
+                delay(1_000)
+            }
             runCatching {
                 captureImage(frontCap, executor, mirrorHorizontal = true)
             }.onFailure { Log.e(TAG, "Sequential front capture error: $it") }.getOrNull()
         } catch (e: Exception) {
-            Log.e(TAG, "Sequential front binding failed: $e")
+            Log.e(TAG, "Sequential front binding failed: ${e.cause ?: e}")
             null
         }
 
         // Step 3: restore back camera (recreate all use cases so they are in a clean state)
         try {
             provider.unbindAll()
+            delay(300)
             backPreview = Preview.Builder().build().also {
                 it.setSurfaceProvider(backPreviewView?.surfaceProvider)
             }

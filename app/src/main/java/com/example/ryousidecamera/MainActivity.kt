@@ -100,18 +100,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun takePhoto() {
         binding.captureButton.isEnabled = false
+        // Show overlay during sequential capture (may take 1-2 seconds on non-concurrent devices)
+        binding.processingOverlay.visibility = View.VISIBLE
         lifecycleScope.launch {
             try {
                 val (backBitmap, frontBitmap) = cameraManager.capturePhoto()
-                if (frontBitmap != null) {
-                    PhotoCombiner.combine(this@MainActivity, backBitmap, frontBitmap)
-                } else {
-                    PhotoCombiner.combine(this@MainActivity, backBitmap, backBitmap.also { backBitmap })
-                }
-                Toast.makeText(this@MainActivity, R.string.photo_saved, Toast.LENGTH_SHORT).show()
+                PhotoCombiner.combine(this@MainActivity, backBitmap, frontBitmap)
+                val msg = if (frontBitmap != null) "両カメラ合成完了" else "バックカメラのみ保存（フロント取得失敗）"
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, "撮影エラー: ${e.message}", Toast.LENGTH_SHORT).show()
             } finally {
+                binding.processingOverlay.visibility = View.GONE
                 binding.captureButton.isEnabled = true
             }
         }
