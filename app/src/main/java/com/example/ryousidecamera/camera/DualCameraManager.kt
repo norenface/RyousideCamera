@@ -36,7 +36,11 @@ class DualCameraManager(private val context: Context) {
 
     companion object {
         private const val TAG = "DualCameraManager"
-        private const val SINGLE_CAMERA_CONFIG_CLASS = "androidx.camera.lifecycle.SingleCameraConfig"
+        // Try known class names across CameraX versions; first found wins
+        private val SINGLE_CAMERA_CONFIG_CANDIDATES = listOf(
+            "androidx.camera.lifecycle.SingleCameraConfig",
+            "androidx.camera.core.SingleCameraConfig"
+        )
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -114,7 +118,11 @@ class DualCameraManager(private val context: Context) {
         useCaseGroup: UseCaseGroup,
         lifecycleOwner: LifecycleOwner
     ): Any {
-        val clazz = Class.forName(SINGLE_CAMERA_CONFIG_CLASS)
+        val clazz = SINGLE_CAMERA_CONFIG_CANDIDATES.firstNotNullOfOrNull { name ->
+            runCatching { Class.forName(name) }.getOrNull()
+        } ?: throw ClassNotFoundException(
+            "SingleCameraConfig not found; tried: $SINGLE_CAMERA_CONFIG_CANDIDATES"
+        )
         // Try the known 3-param constructor first; fall back to any constructor whose
         // first 3 params are compatible (handles minor API changes across CameraX versions).
         val ctor = runCatching {
