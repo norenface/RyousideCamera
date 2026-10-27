@@ -58,11 +58,10 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
-            val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
-            }
-            ContextCompat.startForegroundService(this, intent)
+            // Obtain MediaProjection in Activity immediately (Android 14+ requires this before service starts)
+            val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            ScreenCaptureService.pendingProjection = mpManager.getMediaProjection(result.resultCode, result.data!!)
+            ContextCompat.startForegroundService(this, Intent(this, ScreenCaptureService::class.java))
             isRecording = true
             onRecordingStarted()
         }

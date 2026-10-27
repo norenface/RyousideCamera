@@ -46,6 +46,8 @@ class ScreenCaptureService : LifecycleService() {
         const val EXTRA_FRONT_FILE = "front_file"
         private const val NOTIF_ID = 2001
         private const val CHANNEL_ID = "screen_capture_ch"
+        // Holder for MediaProjection obtained in Activity (avoids Android 14+ timing issues)
+        var pendingProjection: MediaProjection? = null
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -69,19 +71,6 @@ class ScreenCaptureService : LifecycleService() {
             return START_NOT_STICKY
         }
 
-        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
-        val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent?.getParcelableExtra(EXTRA_RESULT_DATA)
-        }
-
-        if (resultCode == -1 || resultData == null) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
         createNotificationChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
@@ -91,11 +80,31 @@ class ScreenCaptureService : LifecycleService() {
             startForeground(NOTIF_ID, buildNotification())
         }
 
+        // Primary: use projection obtained in Activity (avoids Android 14+ timing issues)
+        // Fallback: get from intent extras (older Android)
+        mediaProjection = pendingProjection ?: run {
+            val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
+            val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent?.getParcelableExtra(EXTRA_RESULT_DATA)
+            }
+            if (resultCode != -1 && resultData != null) {
+                (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
+                    .getMediaProjection(resultCode, resultData)
+            } else null
+        }
+        pendingProjection = null
+
+        if (mediaProjection == null) {
+            android.util.Log.e("ScreenCaptureService", "MediaProjection is null, stopping")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         screenFile = File(cacheDir, "screen_${System.currentTimeMillis()}.mp4")
         frontFile = File(cacheDir, "front_${System.currentTimeMillis()}.mp4")
-
-        val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mpManager.getMediaProjection(resultCode, resultData)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             mediaProjection!!.registerCallback(object : MediaProjection.Callback() {
@@ -103,8 +112,12 @@ class ScreenCaptureService : LifecycleService() {
             }, Handler(Looper.getMainLooper()))
         }
 
-        startScreenRecording()
         showFloatingOverlay()
+        try {
+            startScreenRecording()
+        } catch (e: Exception) {
+            android.util.Log.e("ScreenCaptureService", "Screen recording failed: $e")
+        }
         startFrontCameraRecording()
 
         return START_NOT_STICKY

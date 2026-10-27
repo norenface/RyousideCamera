@@ -117,7 +117,11 @@ class VideoCompositor(private val context: Context) {
         onProgress: ((Float) -> Unit)? = null
     ): Uri = withContext(Dispatchers.IO) {
 
-        val (width, height, frameRate) = probeVideo(backFile)
+        val backInfo = probeVideo(backFile)
+        val frontInfo = probeVideo(frontFile)
+        val width = backInfo.width
+        val height = backInfo.height
+        val frameRate = backInfo.fps
 
         val outputFile = File(context.cacheDir, "combined_${System.currentTimeMillis()}.mp4")
 
@@ -156,6 +160,7 @@ class VideoCompositor(private val context: Context) {
         backExtractor.selectTrack(backTrack)
         val backFmt = backExtractor.getTrackFormat(backTrack)
 
+        if (backInfo.rotation != 0) backFmt.setInteger(MediaFormat.KEY_ROTATION, backInfo.rotation)
         val backDecoder = MediaCodec.createDecoderByType(backFmt.getString(MediaFormat.KEY_MIME)!!)
         backDecoder.configure(backFmt, backSurface!!, null, 0)
         backDecoder.start()
@@ -165,6 +170,7 @@ class VideoCompositor(private val context: Context) {
         frontExtractor.selectTrack(frontTrack)
         val frontFmt = frontExtractor.getTrackFormat(frontTrack)
 
+        if (frontInfo.rotation != 0) frontFmt.setInteger(MediaFormat.KEY_ROTATION, frontInfo.rotation)
         val frontDecoder = MediaCodec.createDecoderByType(frontFmt.getString(MediaFormat.KEY_MIME)!!)
         frontDecoder.configure(frontFmt, frontSurface!!, null, 0)
         frontDecoder.start()
@@ -562,14 +568,18 @@ class VideoCompositor(private val context: Context) {
         return ms * 1000L
     }
 
-    private fun probeVideo(file: File): Triple<Int, Int, Int> {
+    private data class VideoInfo(val width: Int, val height: Int, val fps: Int, val rotation: Int)
+
+    private fun probeVideo(file: File): VideoInfo {
         val r = MediaMetadataRetriever().apply { setDataSource(file.absolutePath) }
-        val w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1280
-        val h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 720
+        val rawW = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1280
+        val rawH = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 720
+        val rotation = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
         val fps = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
             ?.toFloatOrNull()?.toInt()?.coerceIn(15, 60) ?: 30
         r.release()
-        return Triple(w, h, fps)
+        val (w, h) = if (rotation == 90 || rotation == 270) Pair(rawH, rawW) else Pair(rawW, rawH)
+        return VideoInfo(w, h, fps, rotation)
     }
 
     private suspend fun saveToMediaStore(tmpFile: File): Uri = withContext(Dispatchers.IO) {
