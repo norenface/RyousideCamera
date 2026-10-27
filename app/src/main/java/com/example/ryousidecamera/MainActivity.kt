@@ -25,6 +25,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.ryousidecamera.camera.DualCameraManager
 import com.example.ryousidecamera.databinding.ActivityMainBinding
 import com.example.ryousidecamera.media.PhotoCombiner
+import com.example.ryousidecamera.media.VideoCompositor
 import com.example.ryousidecamera.service.ScreenCaptureService
 import com.example.ryousidecamera.utils.PermissionHelper
 import kotlinx.coroutines.launch
