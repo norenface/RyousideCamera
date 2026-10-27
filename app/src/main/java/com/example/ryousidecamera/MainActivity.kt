@@ -68,6 +68,14 @@ class MainActivity : AppCompatActivity() {
             if (isChecked) {
                 isPhotoMode = checkedId == R.id.photoModeButton
                 updateCaptureButtonAppearance()
+                if (!isRecording) {
+                    binding.captureButton.isEnabled = false
+                    lifecycleScope.launch {
+                        cameraManager.switchMode(this@MainActivity, isPhotoMode)
+                        binding.captureButton.isEnabled = true
+                        cameraManager.concurrentBindingError?.let { showErrorDialog("Concurrent失敗", it) }
+                    }
+                }
             }
         }
 
@@ -90,16 +98,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
             if (!cameraManager.isConcurrentMode) {
-                if (cameraManager.hasFrontCamera) {
-                    binding.pipPlaceholder.visibility = View.VISIBLE
-                } else {
-                    binding.pipContainer.visibility = View.GONE
-                }
-                // Show the exact binding error so we can diagnose issues
-                val err = cameraManager.concurrentBindingError
-                if (err != null) {
-                    showErrorDialog("Concurrent失敗", err)
-                }
+                binding.pipPlaceholder.visibility = View.VISIBLE
+                cameraManager.concurrentBindingError?.let { showErrorDialog("Concurrent失敗", it) }
             }
         }
     }
