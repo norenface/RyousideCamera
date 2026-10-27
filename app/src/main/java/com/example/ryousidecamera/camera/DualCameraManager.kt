@@ -139,7 +139,7 @@ class DualCameraManager(private val context: Context) {
                 c.parameterTypes[2].isAssignableFrom(LifecycleOwner::class.java)
             }
             ?: throw NoSuchMethodException(
-                "No suitable constructor in $SINGLE_CAMERA_CONFIG_CLASS. " +
+                "No suitable constructor in ${clazz.name}. " +
                 "Available: ${clazz.declaredConstructors.joinToString { c -> "(${c.parameterTypes.joinToString { it.simpleName }})" }}"
             )
         ctor.isAccessible = true
