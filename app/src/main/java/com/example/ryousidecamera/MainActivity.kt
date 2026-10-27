@@ -5,6 +5,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -222,9 +224,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showErrorDialog(title: String, message: String) {
+        val tv = TextView(this).apply {
+            text = message
+            setPadding(48, 32, 48, 16)
+            setTextIsSelectable(true) // long-press to copy
+        }
         AlertDialog.Builder(this)
             .setTitle(title)
-            .setMessage(message)
+            .setView(ScrollView(this).apply { addView(tv) })
             .setPositiveButton("OK", null)
             .show()
     }

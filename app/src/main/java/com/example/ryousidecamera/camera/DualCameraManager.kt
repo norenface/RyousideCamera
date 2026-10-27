@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.lang.reflect.ParameterizedType
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -36,11 +37,6 @@ class DualCameraManager(private val context: Context) {
 
     companion object {
         private const val TAG = "DualCameraManager"
-        // Try known class names across CameraX versions; first found wins
-        private val SINGLE_CAMERA_CONFIG_CANDIDATES = listOf(
-            "androidx.camera.lifecycle.SingleCameraConfig",
-            "androidx.camera.core.SingleCameraConfig"
-        )
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -113,76 +109,70 @@ class DualCameraManager(private val context: Context) {
         tryConcurrentBinding(provider, lifecycleOwner)
     }
 
+    /**
+     * Finds the bindToLifecycle(List) method on ProcessCameraProvider, then extracts
+     * the SingleCameraConfig class from its generic parameter type. This avoids hardcoding
+     * class names and works regardless of CameraX version.
+     */
+    private fun findBindMethodAndConfigClass(provider: ProcessCameraProvider): Pair<java.lang.reflect.Method, Class<*>> {
+        val method = generateSequence<Class<*>>(provider.javaClass) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }
+            .firstOrNull { m ->
+                m.name == "bindToLifecycle" &&
+                m.parameterCount == 1 &&
+                m.parameterTypes[0] == List::class.java
+            }
+            ?: throw NoSuchMethodException(
+                "bindToLifecycle(List) not found on ${provider.javaClass.name}"
+            )
+        method.isAccessible = true
+
+        // Extract SingleCameraConfig class from the generic signature List<SingleCameraConfig>
+        val configClass = runCatching {
+            val paramType = method.genericParameterTypes[0] as? ParameterizedType
+            paramType?.actualTypeArguments?.getOrNull(0) as? Class<*>
+        }.getOrNull()
+            ?: throw ClassNotFoundException(
+                "Cannot extract SingleCameraConfig type from ${method.genericParameterTypes.firstOrNull()}"
+            )
+        Log.d(TAG, "Found SingleCameraConfig class: ${configClass.name}")
+        return Pair(method, configClass)
+    }
+
     private fun makeSingleCameraConfig(
+        configClass: Class<*>,
         cameraSelector: CameraSelector,
         useCaseGroup: UseCaseGroup,
         lifecycleOwner: LifecycleOwner
     ): Any {
-        // Use CameraX's own classloader so the class is always resolvable
-        val cameraXLoader = ProcessCameraProvider::class.java.classLoader
-        val clazz = SINGLE_CAMERA_CONFIG_CANDIDATES.firstNotNullOfOrNull { name ->
-            runCatching {
-                cameraXLoader?.loadClass(name) ?: Class.forName(name)
-            }.getOrNull()
-        } ?: throw ClassNotFoundException(
-            "SingleCameraConfig not found via CameraX loader; tried: $SINGLE_CAMERA_CONFIG_CANDIDATES"
-        )
-        // Try the known 3-param constructor first; fall back to any constructor whose
-        // first 3 params are compatible (handles minor API changes across CameraX versions).
         val ctor = runCatching {
-            clazz.getConstructor(
+            configClass.getConstructor(
                 CameraSelector::class.java,
                 UseCaseGroup::class.java,
                 LifecycleOwner::class.java
             )
         }.getOrNull()
-            ?: clazz.declaredConstructors.firstOrNull { c ->
+            ?: configClass.declaredConstructors.firstOrNull { c ->
                 c.parameterCount >= 3 &&
                 c.parameterTypes[0].isAssignableFrom(CameraSelector::class.java) &&
                 c.parameterTypes[1].isAssignableFrom(UseCaseGroup::class.java) &&
                 c.parameterTypes[2].isAssignableFrom(LifecycleOwner::class.java)
             }
             ?: throw NoSuchMethodException(
-                "No suitable constructor in ${clazz.name}. " +
-                "Available: ${clazz.declaredConstructors.joinToString { c -> "(${c.parameterTypes.joinToString { it.simpleName }})" }}"
+                "No suitable constructor in ${configClass.name}. " +
+                "Available: ${configClass.declaredConstructors.joinToString { c -> "(${c.parameterTypes.joinToString { it.simpleName }})" }}"
             )
         ctor.isAccessible = true
-        // If constructor has more than 3 params, fill extras with null
         val args: Array<Any?> = Array(ctor.parameterCount) { i ->
             when (i) { 0 -> cameraSelector; 1 -> useCaseGroup; 2 -> lifecycleOwner; else -> null }
         }
         return ctor.newInstance(*args)
     }
 
-    private fun bindConcurrent(provider: ProcessCameraProvider, configs: List<Any>) {
-        // Try public methods first (getMethods includes inherited), then search the full
-        // class hierarchy via declaredMethods for package-private / restricted methods.
-        val method =
-            provider.javaClass.methods.firstOrNull { m ->
-                m.name == "bindToLifecycle" &&
-                m.parameterCount == 1 &&
-                m.parameterTypes[0] == List::class.java
-            }
-            ?: generateSequence<Class<*>>(provider.javaClass) { it.superclass }
-                .flatMap { it.declaredMethods.asSequence() }
-                .firstOrNull { m ->
-                    m.name == "bindToLifecycle" &&
-                    m.parameterCount == 1 &&
-                    m.parameterTypes[0] == List::class.java
-                }
-            ?: throw NoSuchMethodException(
-                "bindToLifecycle(List) not found on ${provider.javaClass.name}. " +
-                "bindToLifecycle overloads: ${
-                    provider.javaClass.methods.filter { it.name == "bindToLifecycle" }
-                        .joinToString { m -> "(${m.parameterTypes.joinToString { it.simpleName }})" }
-                }"
-            )
-        method.isAccessible = true
-        method.invoke(provider, configs)
-    }
-
     private fun tryConcurrentBinding(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
         try {
+            val (bindMethod, configClass) = findBindMethodAndConfigClass(provider)
+
             val backGroup = UseCaseGroup.Builder()
                 .addUseCase(backPreview!!)
                 .addUseCase(backImageCapture!!)
@@ -194,10 +184,10 @@ class DualCameraManager(private val context: Context) {
                 .addUseCase(frontVideoCapture!!)
                 .build()
 
-            val backConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner)
-            val frontConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner)
+            val backConfig = makeSingleCameraConfig(configClass, CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner)
+            val frontConfig = makeSingleCameraConfig(configClass, CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner)
 
-            bindConcurrent(provider, listOf(backConfig, frontConfig))
+            bindMethod.invoke(provider, listOf(backConfig, frontConfig))
             isConcurrentMode = true
             isFrontVideoEnabled = true
             hasFrontCamera = true
@@ -213,6 +203,8 @@ class DualCameraManager(private val context: Context) {
 
     private fun tryConcurrentNoFrontVideo(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
         try {
+            val (bindMethod, configClass) = findBindMethodAndConfigClass(provider)
+
             val backGroup = UseCaseGroup.Builder()
                 .addUseCase(backPreview!!)
                 .addUseCase(backImageCapture!!)
@@ -223,10 +215,10 @@ class DualCameraManager(private val context: Context) {
                 .addUseCase(frontImageCapture!!)
                 .build()
 
-            val backConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner)
-            val frontConfig = makeSingleCameraConfig(CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner)
+            val backConfig = makeSingleCameraConfig(configClass, CameraSelector.DEFAULT_BACK_CAMERA, backGroup, lifecycleOwner)
+            val frontConfig = makeSingleCameraConfig(configClass, CameraSelector.DEFAULT_FRONT_CAMERA, frontGroup, lifecycleOwner)
 
-            bindConcurrent(provider, listOf(backConfig, frontConfig))
+            bindMethod.invoke(provider, listOf(backConfig, frontConfig))
             isConcurrentMode = true
             isFrontVideoEnabled = false
             hasFrontCamera = true
