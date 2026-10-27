@@ -55,6 +55,8 @@ class ScreenCaptureService : LifecycleService() {
         private const val NOTIF_ID_DONE = 2002
         private const val CHANNEL_ID = "screen_capture_ch"
         var pendingProjection: MediaProjection? = null
+        // Checked by MainActivity.onResume() to restore UI after activity recreation
+        @Volatile var isRunning = false
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -111,6 +113,7 @@ class ScreenCaptureService : LifecycleService() {
             return START_NOT_STICKY
         }
 
+        isRunning = true
         screenFile = File(cacheDir, "screen_${System.currentTimeMillis()}.mp4")
         frontFile = File(cacheDir, "front_${System.currentTimeMillis()}.mp4")
 
@@ -124,13 +127,19 @@ class ScreenCaptureService : LifecycleService() {
             showFloatingOverlay()
         } catch (e: Exception) {
             android.util.Log.e("ScreenCaptureService", "showFloatingOverlay failed: $e")
+            updateNotificationText("録画中（オーバーレイ非表示）通知の停止ボタンで終了")
         }
+        var screenStarted = false
         try {
             startScreenRecording()
+            screenStarted = true
         } catch (e: Exception) {
             android.util.Log.e("ScreenCaptureService", "Screen recording failed: $e")
+            updateNotificationText("スクリーン録画失敗: ${e.javaClass.simpleName}")
         }
-        startFrontCameraRecording()
+        if (screenStarted) {
+            startFrontCameraRecording()
+        }
 
         return START_NOT_STICKY
     }
@@ -281,6 +290,8 @@ class ScreenCaptureService : LifecycleService() {
         screenFile = null
         frontFile = null
 
+        isRunning = false
+
         if (sf == null) {
             doStopForeground()
             stopSelf()
@@ -384,6 +395,7 @@ class ScreenCaptureService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         if (!stopped) {
             // System killed the service before explicit stop — minimal cleanup only
             stopped = true

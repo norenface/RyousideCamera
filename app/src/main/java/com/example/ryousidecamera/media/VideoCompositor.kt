@@ -119,8 +119,9 @@ class VideoCompositor(private val context: Context) {
 
         val backInfo = probeVideo(backFile)
         val frontInfo = probeVideo(frontFile)
-        val width = backInfo.width
-        val height = backInfo.height
+        // Align to multiple of 2 — required by most hardware H.264 encoders
+        val width = backInfo.width.alignTo2()
+        val height = backInfo.height.alignTo2()
         val frameRate = backInfo.fps
 
         val outputFile = File(context.cacheDir, "combined_${System.currentTimeMillis()}.mp4")
@@ -569,6 +570,8 @@ class VideoCompositor(private val context: Context) {
     }
 
     private data class VideoInfo(val width: Int, val height: Int, val fps: Int, val rotation: Int)
+
+    private fun Int.alignTo2() = if (this % 2 == 0) this else this - 1
 
     private fun probeVideo(file: File): VideoInfo {
         val r = MediaMetadataRetriever().apply { setDataSource(file.absolutePath) }

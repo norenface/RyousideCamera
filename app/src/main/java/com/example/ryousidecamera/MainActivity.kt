@@ -101,6 +101,17 @@ class MainActivity : AppCompatActivity() {
         setupUI()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // If the activity was recreated while screen recording was running, restore UI
+        if (ScreenCaptureService.isRunning && !isRecording) {
+            isRecording = true
+            captureMode = CaptureMode.SCREEN
+            binding.modeToggle.check(R.id.screenModeButton)
+            onRecordingStarted()
+        }
+    }
+
     override fun onStart() {
         super.onStart()
     }
