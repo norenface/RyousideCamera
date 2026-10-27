@@ -118,10 +118,14 @@ class DualCameraManager(private val context: Context) {
         useCaseGroup: UseCaseGroup,
         lifecycleOwner: LifecycleOwner
     ): Any {
+        // Use CameraX's own classloader so the class is always resolvable
+        val cameraXLoader = ProcessCameraProvider::class.java.classLoader
         val clazz = SINGLE_CAMERA_CONFIG_CANDIDATES.firstNotNullOfOrNull { name ->
-            runCatching { Class.forName(name) }.getOrNull()
+            runCatching {
+                cameraXLoader?.loadClass(name) ?: Class.forName(name)
+            }.getOrNull()
         } ?: throw ClassNotFoundException(
-            "SingleCameraConfig not found; tried: $SINGLE_CAMERA_CONFIG_CANDIDATES"
+            "SingleCameraConfig not found via CameraX loader; tried: $SINGLE_CAMERA_CONFIG_CANDIDATES"
         )
         // Try the known 3-param constructor first; fall back to any constructor whose
         // first 3 params are compatible (handles minor API changes across CameraX versions).

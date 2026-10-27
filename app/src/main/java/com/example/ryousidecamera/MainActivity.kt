@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.video.VideoRecordEvent
 import androidx.lifecycle.lifecycleScope
@@ -95,7 +96,7 @@ class MainActivity : AppCompatActivity() {
                 // Show the exact binding error so we can diagnose issues
                 val err = cameraManager.concurrentBindingError
                 if (err != null) {
-                    Toast.makeText(this@MainActivity, "Concurrent失敗: $err", Toast.LENGTH_LONG).show()
+                    showErrorDialog("Concurrent失敗", err)
                 }
             }
         }
@@ -218,6 +219,14 @@ class MainActivity : AppCompatActivity() {
             resolver.update(uri, values, null, null)
         }
         return uri
+    }
+
+    private fun showErrorDialog(title: String, message: String) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     override fun onRequestPermissionsResult(
