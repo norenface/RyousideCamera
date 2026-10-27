@@ -60,6 +60,9 @@ class DualCameraManager(private val context: Context) {
         private set
     var hasFrontCamera = false
         private set
+    /** Non-null when concurrent binding failed; contains the root cause for diagnosis. */
+    var concurrentBindingError: String? = null
+        private set
 
     private var backRecording: Recording? = null
     private var frontRecording: Recording? = null
@@ -101,39 +104,67 @@ class DualCameraManager(private val context: Context) {
     }
 
     private fun bindCameras(provider: ProcessCameraProvider, lifecycleOwner: LifecycleOwner) {
+        val concurrentGroups = provider.availableConcurrentCameraInfos
+        Log.d(TAG, "availableConcurrentCameraInfos: ${concurrentGroups.size} group(s)")
         tryConcurrentBinding(provider, lifecycleOwner)
     }
 
-    // SingleCameraConfig is @RestrictTo(LIBRARY_GROUP) in camera-lifecycle, so we use
-    // reflection to access it at runtime while avoiding a compile-time dependency.
     private fun makeSingleCameraConfig(
         cameraSelector: CameraSelector,
         useCaseGroup: UseCaseGroup,
         lifecycleOwner: LifecycleOwner
     ): Any {
         val clazz = Class.forName(SINGLE_CAMERA_CONFIG_CLASS)
-        val ctor = clazz.getConstructor(
-            CameraSelector::class.java,
-            UseCaseGroup::class.java,
-            LifecycleOwner::class.java
-        )
+        // Try the known 3-param constructor first; fall back to any constructor whose
+        // first 3 params are compatible (handles minor API changes across CameraX versions).
+        val ctor = runCatching {
+            clazz.getConstructor(
+                CameraSelector::class.java,
+                UseCaseGroup::class.java,
+                LifecycleOwner::class.java
+            )
+        }.getOrNull()
+            ?: clazz.declaredConstructors.firstOrNull { c ->
+                c.parameterCount >= 3 &&
+                c.parameterTypes[0].isAssignableFrom(CameraSelector::class.java) &&
+                c.parameterTypes[1].isAssignableFrom(UseCaseGroup::class.java) &&
+                c.parameterTypes[2].isAssignableFrom(LifecycleOwner::class.java)
+            }
+            ?: throw NoSuchMethodException(
+                "No suitable constructor in $SINGLE_CAMERA_CONFIG_CLASS. " +
+                "Available: ${clazz.declaredConstructors.joinToString { c -> "(${c.parameterTypes.joinToString { it.simpleName }})" }}"
+            )
         ctor.isAccessible = true
-        return ctor.newInstance(cameraSelector, useCaseGroup, lifecycleOwner)
+        // If constructor has more than 3 params, fill extras with null
+        val args: Array<Any?> = Array(ctor.parameterCount) { i ->
+            when (i) { 0 -> cameraSelector; 1 -> useCaseGroup; 2 -> lifecycleOwner; else -> null }
+        }
+        return ctor.newInstance(*args)
     }
 
     private fun bindConcurrent(provider: ProcessCameraProvider, configs: List<Any>) {
-        // Search both the runtime class and ProcessCameraProvider's static hierarchy
-        // to reliably find the overloaded bindToLifecycle(List) method.
-        val method = (sequenceOf(provider.javaClass) +
-                generateSequence<Class<*>>(ProcessCameraProvider::class.java) { it.superclass })
-            .distinct()
-            .flatMap { it.declaredMethods.asSequence() }
-            .firstOrNull { m ->
+        // Try public methods first (getMethods includes inherited), then search the full
+        // class hierarchy via declaredMethods for package-private / restricted methods.
+        val method =
+            provider.javaClass.methods.firstOrNull { m ->
                 m.name == "bindToLifecycle" &&
                 m.parameterCount == 1 &&
                 m.parameterTypes[0] == List::class.java
             }
-            ?: throw NoSuchMethodException("bindToLifecycle(List) not found on ${provider.javaClass.name}")
+            ?: generateSequence<Class<*>>(provider.javaClass) { it.superclass }
+                .flatMap { it.declaredMethods.asSequence() }
+                .firstOrNull { m ->
+                    m.name == "bindToLifecycle" &&
+                    m.parameterCount == 1 &&
+                    m.parameterTypes[0] == List::class.java
+                }
+            ?: throw NoSuchMethodException(
+                "bindToLifecycle(List) not found on ${provider.javaClass.name}. " +
+                "bindToLifecycle overloads: ${
+                    provider.javaClass.methods.filter { it.name == "bindToLifecycle" }
+                        .joinToString { m -> "(${m.parameterTypes.joinToString { it.simpleName }})" }
+                }"
+            )
         method.isAccessible = true
         method.invoke(provider, configs)
     }
@@ -161,7 +192,9 @@ class DualCameraManager(private val context: Context) {
             Log.d(TAG, "Concurrent camera binding succeeded (video on both)")
         } catch (e: Exception) {
             val cause = e.cause ?: e
-            Log.w(TAG, "Full concurrent binding failed (${cause.javaClass.simpleName}: ${cause.message}), retrying without front video")
+            val msg = "${cause.javaClass.simpleName}: ${cause.message}"
+            concurrentBindingError = msg
+            Log.w(TAG, "Full concurrent binding failed ($msg), retrying without front video")
             tryConcurrentNoFrontVideo(provider, lifecycleOwner)
         }
     }

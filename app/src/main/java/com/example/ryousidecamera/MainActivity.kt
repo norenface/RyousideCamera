@@ -88,11 +88,14 @@ class MainActivity : AppCompatActivity() {
             cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
             if (!cameraManager.isConcurrentMode) {
                 if (cameraManager.hasFrontCamera) {
-                    // Live preview not available, but sequential photo capture is.
-                    // Keep the PiP container visible with a placeholder label.
                     binding.pipPlaceholder.visibility = View.VISIBLE
                 } else {
                     binding.pipContainer.visibility = View.GONE
+                }
+                // Show the exact binding error so we can diagnose issues
+                val err = cameraManager.concurrentBindingError
+                if (err != null) {
+                    Toast.makeText(this@MainActivity, "Concurrent失敗: $err", Toast.LENGTH_LONG).show()
                 }
             }
         }
