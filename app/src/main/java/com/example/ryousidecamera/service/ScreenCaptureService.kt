@@ -3,6 +3,7 @@ package com.example.ryousidecamera.service
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
@@ -14,6 +15,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -33,6 +35,12 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import com.example.ryousidecamera.R
+import com.example.ryousidecamera.media.VideoCompositor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class ScreenCaptureService : LifecycleService() {
@@ -42,11 +50,9 @@ class ScreenCaptureService : LifecycleService() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val BROADCAST_DONE = "com.example.ryousidecamera.SCREEN_DONE"
-        const val EXTRA_SCREEN_FILE = "screen_file"
-        const val EXTRA_FRONT_FILE = "front_file"
         private const val NOTIF_ID = 2001
+        private const val NOTIF_ID_DONE = 2002
         private const val CHANNEL_ID = "screen_capture_ch"
-        // Holder for MediaProjection obtained in Activity (avoids Android 14+ timing issues)
         var pendingProjection: MediaProjection? = null
     }
 
@@ -59,9 +65,12 @@ class ScreenCaptureService : LifecycleService() {
     private var floatingView: View? = null
     private var floatingParams: WindowManager.LayoutParams? = null
 
-    private lateinit var screenFile: File
-    private lateinit var frontFile: File
+    private var screenFile: File? = null
+    private var frontFile: File? = null
     private var stopped = false
+
+    // Independent scope — not cancelled when lifecycle ends, so composition survives
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -75,13 +84,11 @@ class ScreenCaptureService : LifecycleService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            startForeground(NOTIF_ID, buildNotification(), type)
+            startForeground(NOTIF_ID, buildNotification("スクリーン録画中"), type)
         } else {
-            startForeground(NOTIF_ID, buildNotification())
+            startForeground(NOTIF_ID, buildNotification("スクリーン録画中"))
         }
 
-        // Primary: use projection obtained in Activity (avoids Android 14+ timing issues)
-        // Fallback: get from intent extras (older Android)
         mediaProjection = pendingProjection ?: run {
             val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
             val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -112,7 +119,11 @@ class ScreenCaptureService : LifecycleService() {
             }, Handler(Looper.getMainLooper()))
         }
 
-        showFloatingOverlay()
+        try {
+            showFloatingOverlay()
+        } catch (e: Exception) {
+            android.util.Log.e("ScreenCaptureService", "showFloatingOverlay failed: $e")
+        }
         try {
             startScreenRecording()
         } catch (e: Exception) {
@@ -140,7 +151,7 @@ class ScreenCaptureService : LifecycleService() {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setVideoSource(MediaRecorder.VideoSource.SURFACE)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setOutputFile(screenFile.absolutePath)
+            setOutputFile(screenFile!!.absolutePath)
             setVideoEncoder(MediaRecorder.VideoEncoder.H264)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             setVideoSize(width, height)
@@ -230,7 +241,7 @@ class ScreenCaptureService : LifecycleService() {
                 }
 
                 cameraRecording = videoCapture.output
-                    .prepareRecording(this, FileOutputOptions.Builder(frontFile).build())
+                    .prepareRecording(this, FileOutputOptions.Builder(frontFile!!).build())
                     .withAudioEnabled()
                     .start(ContextCompat.getMainExecutor(this)) { /* events */ }
             } catch (e: Exception) {
@@ -264,29 +275,99 @@ class ScreenCaptureService : LifecycleService() {
         } catch (_: Exception) {}
         floatingView = null
 
-        sendBroadcast(Intent(BROADCAST_DONE).apply {
-            putExtra(EXTRA_SCREEN_FILE, screenFile.absolutePath)
-            putExtra(EXTRA_FRONT_FILE, frontFile.absolutePath)
-        })
+        val sf = screenFile
+        val ff = frontFile
+        screenFile = null
+        frontFile = null
 
+        if (sf == null) {
+            doStopForeground()
+            stopSelf()
+            return
+        }
+
+        // Update notification while compositing — keep service in foreground
+        updateNotificationText("動画を合成中…")
+
+        // Composition runs in serviceScope (independent of lifecycle) so it survives
+        // even if onDestroy fires before composition finishes
+        serviceScope.launch {
+            try {
+                if (ff != null && ff.exists() && ff.length() > 0) {
+                    VideoCompositor(this@ScreenCaptureService).compose(sf, ff) {}
+                } else {
+                    withContext(Dispatchers.IO) { saveVideoOnly(sf) }
+                }
+                showDoneNotification()
+            } catch (e: Exception) {
+                android.util.Log.e("ScreenCaptureService", "Composition failed: $e")
+            } finally {
+                sf.delete()
+                ff?.delete()
+                // Notify MainActivity to reset UI (best-effort; activity may be gone)
+                sendBroadcast(Intent(BROADCAST_DONE))
+                doStopForeground()
+                stopSelf()
+            }
+        }
+    }
+
+    private fun doStopForeground() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
-        stopSelf()
     }
 
-    private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("スクリーン録画中")
-        .setContentText("通知をタップして録画を停止")
+    private fun updateNotificationText(text: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIF_ID, buildNotification(text))
+    }
+
+    private fun showDoneNotification() {
+        val nm = getSystemService(NotificationManager::class.java)
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("録画完了")
+            .setContentText("動画をフォトに保存しました")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(NOTIF_ID_DONE, notif)
+    }
+
+    private suspend fun saveVideoOnly(file: File): android.net.Uri = withContext(Dispatchers.IO) {
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, "RyousideCamera_${System.currentTimeMillis()}.mp4")
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/RyousideCamera")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+        }
+        val resolver = contentResolver
+        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)!!
+        resolver.openOutputStream(uri)!!.use { out -> file.inputStream().use { it.copyTo(out) } }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        }
+        uri
+    }
+
+    private fun buildNotification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle("RyousideCamera")
+        .setContentText(text)
         .setSmallIcon(R.drawable.ic_launcher_foreground)
-        .addAction(0, "停止", PendingIntent.getService(
-            this, 0,
-            Intent(this, ScreenCaptureService::class.java).apply { action = ACTION_STOP },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        ))
+        .addAction(
+            0, "停止", PendingIntent.getService(
+                this, 0,
+                Intent(this, ScreenCaptureService::class.java).apply { action = ACTION_STOP },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        )
         .setOngoing(true)
         .build()
 
@@ -302,6 +383,19 @@ class ScreenCaptureService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        stopCapture()
+        if (!stopped) {
+            // System killed the service before explicit stop — minimal cleanup only
+            stopped = true
+            cameraRecording?.stop()
+            try { screenRecorder?.stop() } catch (_: Exception) {}
+            screenRecorder?.release()
+            virtualDisplay?.release()
+            mediaProjection?.stop()
+            cameraProvider?.unbindAll()
+            try { floatingView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
+            screenFile?.delete()
+            frontFile?.delete()
+            serviceScope.cancel()
+        }
     }
 }

@@ -25,7 +25,6 @@ import androidx.lifecycle.lifecycleScope
 import com.example.ryousidecamera.camera.DualCameraManager
 import com.example.ryousidecamera.databinding.ActivityMainBinding
 import com.example.ryousidecamera.media.PhotoCombiner
-import com.example.ryousidecamera.media.VideoCompositor
 import com.example.ryousidecamera.service.ScreenCaptureService
 import com.example.ryousidecamera.utils.PermissionHelper
 import kotlinx.coroutines.launch
@@ -69,9 +68,11 @@ class MainActivity : AppCompatActivity() {
 
     private val screenDoneReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val screenPath = intent.getStringExtra(ScreenCaptureService.EXTRA_SCREEN_FILE) ?: return
-            val frontPath = intent.getStringExtra(ScreenCaptureService.EXTRA_FRONT_FILE) ?: return
-            composeScreenVideo(File(screenPath), File(frontPath))
+            // Composition is handled by ScreenCaptureService; just reset UI here
+            runOnUiThread {
+                binding.processingOverlay.visibility = android.view.View.GONE
+                binding.captureButton.isEnabled = true
+            }
         }
     }
 
@@ -81,6 +82,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         cameraManager = DualCameraManager(this)
+
+        val filter = IntentFilter(ScreenCaptureService.BROADCAST_DONE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenDoneReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenDoneReceiver, filter)
+        }
 
         if (PermissionHelper.allGranted(this)) {
             startCamera()
@@ -93,18 +102,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(ScreenCaptureService.BROADCAST_DONE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(screenDoneReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(screenDoneReceiver, filter)
-        }
     }
 
     override fun onStop() {
         super.onStop()
-        unregisterReceiver(screenDoneReceiver)
     }
 
     private fun setupUI() {
@@ -321,29 +322,6 @@ class MainActivity : AppCompatActivity() {
         binding.captureButton.isEnabled = false
     }
 
-    private fun composeScreenVideo(screenFile: File, frontFile: File) {
-        runOnUiThread { binding.processingOverlay.visibility = View.VISIBLE }
-        lifecycleScope.launch {
-            try {
-                if (frontFile.exists() && frontFile.length() > 0) {
-                    VideoCompositor(this@MainActivity).compose(screenFile, frontFile) {}
-                } else {
-                    saveBackVideoOnly(screenFile)
-                }
-                Toast.makeText(this@MainActivity, R.string.video_saved, Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "動画処理エラー: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                screenFile.delete()
-                frontFile.delete()
-                runOnUiThread {
-                    binding.processingOverlay.visibility = View.GONE
-                    binding.captureButton.isEnabled = true
-                }
-            }
-        }
-    }
-
     private suspend fun saveBackVideoOnly(file: File): android.net.Uri {
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Video.Media.DISPLAY_NAME,
@@ -397,6 +375,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         timerHandler.removeCallbacks(timerRunnable)
         cameraManager.release()
+        unregisterReceiver(screenDoneReceiver)
     }
 
     companion object {
