@@ -51,6 +51,7 @@ dependencies {
     implementation "androidx.camera:camera-video:${camerax_version}"
 
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.0'
+    implementation 'androidx.lifecycle:lifecycle-service:2.8.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0'
     implementation 'androidx.concurrent:concurrent-futures-ktx:1.2.0'
 }

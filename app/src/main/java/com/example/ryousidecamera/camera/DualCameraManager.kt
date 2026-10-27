@@ -51,6 +51,8 @@ class DualCameraManager(private val context: Context) {
         private set
     var isFrontVideoEnabled = false
         private set
+    var isSwapped = false
+        private set
     var concurrentBindingError: String? = null
         private set
 
@@ -92,11 +94,19 @@ class DualCameraManager(private val context: Context) {
         bindCameras(provider, lifecycleOwner)
     }
 
+    fun swapPreviews() {
+        isSwapped = !isSwapped
+        val bpv = backPreviewView ?: return
+        val fpv = frontPreviewView ?: return
+        backPreview?.setSurfaceProvider(if (isSwapped) fpv.surfaceProvider else bpv.surfaceProvider)
+        frontPreview?.setSurfaceProvider(if (isSwapped) bpv.surfaceProvider else fpv.surfaceProvider)
+    }
+
     private fun recreateUseCases() {
         backPreview = Preview.Builder().build()
-            .also { it.setSurfaceProvider(backPreviewView?.surfaceProvider) }
+            .also { it.setSurfaceProvider(if (isSwapped) frontPreviewView?.surfaceProvider else backPreviewView?.surfaceProvider) }
         frontPreview = Preview.Builder().build()
-            .also { it.setSurfaceProvider(frontPreviewView?.surfaceProvider) }
+            .also { it.setSurfaceProvider(if (isSwapped) backPreviewView?.surfaceProvider else frontPreviewView?.surfaceProvider) }
         backImageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
         frontImageCapture = ImageCapture.Builder()

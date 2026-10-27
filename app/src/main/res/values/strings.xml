@@ -11,4 +11,6 @@
     <string name="dual_camera_unavailable">デュアルカメラ非対応：バックカメラのみ使用</string>
     <string name="recording">録画中</string>
     <string name="stop_recording">停止</string>
+    <string name="screen_mode">スクリーン</string>
+    <string name="screen_mode_hint">録画ボタンを押してゲームに切り替えてください\nゲーム画面＋顔カメラを同時に録画します</string>
 </resources>

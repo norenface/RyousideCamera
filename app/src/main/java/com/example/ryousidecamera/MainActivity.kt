@@ -1,34 +1,46 @@
 package com.example.ryousidecamera
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.View
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.video.VideoRecordEvent
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.ryousidecamera.camera.DualCameraManager
 import com.example.ryousidecamera.databinding.ActivityMainBinding
 import com.example.ryousidecamera.media.PhotoCombiner
 import com.example.ryousidecamera.media.VideoCompositor
+import com.example.ryousidecamera.service.ScreenCaptureService
 import com.example.ryousidecamera.utils.PermissionHelper
 import kotlinx.coroutines.launch
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
+    private enum class CaptureMode { PHOTO, VIDEO, SCREEN }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraManager: DualCameraManager
 
-    private var isPhotoMode = true
+    private var captureMode = CaptureMode.PHOTO
     private var isRecording = false
 
-    // Timer
     private val timerHandler = Handler(Looper.getMainLooper())
     private var recordingStartMs = 0L
     private val timerRunnable = object : Runnable {
@@ -39,11 +51,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Temp recording files
     private var backTmpFile: File? = null
     private var frontTmpFile: File? = null
-    private var backRecordingFinished = false
-    private var frontRecordingFinished = false
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            val intent = Intent(this, ScreenCaptureService::class.java).apply {
+                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
+            }
+            ContextCompat.startForegroundService(this, intent)
+            isRecording = true
+            onRecordingStarted()
+        }
+    }
+
+    private val screenDoneReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val screenPath = intent.getStringExtra(ScreenCaptureService.EXTRA_SCREEN_FILE) ?: return
+            val frontPath = intent.getStringExtra(ScreenCaptureService.EXTRA_FRONT_FILE) ?: return
+            composeScreenVideo(File(screenPath), File(frontPath))
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,42 +92,90 @@ class MainActivity : AppCompatActivity() {
         setupUI()
     }
 
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(ScreenCaptureService.BROADCAST_DONE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenDoneReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenDoneReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(screenDoneReceiver)
+    }
+
     private fun setupUI() {
-        // Mode toggle: default Photo selected
         binding.modeToggle.check(R.id.photoModeButton)
         binding.modeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (isChecked) {
-                isPhotoMode = checkedId == R.id.photoModeButton
-                updateCaptureButtonAppearance()
-                if (!isRecording) {
-                    binding.captureButton.isEnabled = false
-                    lifecycleScope.launch {
-                        cameraManager.switchMode(this@MainActivity, isPhotoMode)
-                        binding.captureButton.isEnabled = true
-                        cameraManager.concurrentBindingError?.let { showErrorDialog("Concurrent失敗", it) }
+            if (!isChecked) return@addOnButtonCheckedListener
+            val prevMode = captureMode
+            captureMode = when (checkedId) {
+                R.id.photoModeButton -> CaptureMode.PHOTO
+                R.id.videoModeButton -> CaptureMode.VIDEO
+                R.id.screenModeButton -> CaptureMode.SCREEN
+                else -> CaptureMode.PHOTO
+            }
+            updateCaptureButtonAppearance()
+            updateModeUI()
+
+            if (!isRecording) {
+                when {
+                    captureMode == CaptureMode.SCREEN && prevMode != CaptureMode.SCREEN -> {
+                        cameraManager.release()
+                    }
+                    prevMode == CaptureMode.SCREEN && captureMode != CaptureMode.SCREEN -> {
+                        startCamera()
+                    }
+                    captureMode != CaptureMode.SCREEN -> {
+                        val isPhoto = captureMode == CaptureMode.PHOTO
+                        binding.captureButton.isEnabled = false
+                        lifecycleScope.launch {
+                            cameraManager.switchMode(this@MainActivity, isPhoto)
+                            binding.captureButton.isEnabled = true
+                            cameraManager.concurrentBindingError?.let { showErrorDialog("Concurrent失敗", it) }
+                        }
                     }
                 }
             }
         }
 
         binding.captureButton.setOnClickListener {
-            if (isPhotoMode) {
-                takePhoto()
-            } else {
-                if (isRecording) stopVideoRecording() else startVideoRecording()
+            when (captureMode) {
+                CaptureMode.PHOTO -> takePhoto()
+                CaptureMode.VIDEO -> if (isRecording) stopVideoRecording() else startVideoRecording()
+                CaptureMode.SCREEN -> if (isRecording) stopScreenCapture() else startScreenCapture()
             }
+        }
+
+        binding.swapButton.setOnClickListener {
+            cameraManager.swapPreviews()
         }
     }
 
+    private fun updateModeUI() {
+        binding.screenModeHint.visibility =
+            if (captureMode == CaptureMode.SCREEN && !isRecording) View.VISIBLE else View.GONE
+        binding.pipContainer.visibility =
+            if (captureMode == CaptureMode.SCREEN) View.GONE else View.VISIBLE
+        binding.swapButton.visibility =
+            if (captureMode != CaptureMode.SCREEN && cameraManager.isConcurrentMode && !isRecording)
+                View.VISIBLE else View.GONE
+    }
+
     private fun updateCaptureButtonAppearance() {
-        binding.photoBg.visibility = if (isPhotoMode) View.VISIBLE else View.GONE
-        binding.recordBg.visibility = if (isPhotoMode) View.GONE else View.VISIBLE
+        binding.photoBg.visibility = if (captureMode == CaptureMode.PHOTO) View.VISIBLE else View.GONE
+        binding.recordBg.visibility = if (captureMode != CaptureMode.PHOTO) View.VISIBLE else View.GONE
         binding.stopIcon.visibility = View.GONE
     }
 
     private fun startCamera() {
         lifecycleScope.launch {
             cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
+            updateModeUI()
             if (!cameraManager.isConcurrentMode) {
                 binding.pipPlaceholder.visibility = View.VISIBLE
                 cameraManager.concurrentBindingError?.let { showErrorDialog("Concurrent失敗", it) }
@@ -106,13 +185,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun takePhoto() {
         binding.captureButton.isEnabled = false
-        // Show overlay during sequential capture (may take 1-2 seconds on non-concurrent devices)
         binding.processingOverlay.visibility = View.VISIBLE
         lifecycleScope.launch {
             try {
                 val (backBitmap, frontBitmap) = cameraManager.capturePhoto()
-                PhotoCombiner.combine(this@MainActivity, backBitmap, frontBitmap)
-                val msg = if (frontBitmap != null) "両カメラ合成完了" else "バックカメラのみ保存（フロント取得失敗）"
+                val (mainBitmap, pipBitmap) = if (cameraManager.isSwapped && frontBitmap != null) {
+                    Pair(frontBitmap, backBitmap)
+                } else {
+                    Pair(backBitmap, frontBitmap)
+                }
+                PhotoCombiner.combine(this@MainActivity, mainBitmap, pipBitmap)
+                val msg = if (pipBitmap != null) "両カメラ合成完了" else "バックカメラのみ保存（フロント取得失敗）"
                 Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, "撮影エラー: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -126,8 +209,6 @@ class MainActivity : AppCompatActivity() {
     private fun startVideoRecording() {
         backTmpFile = File(cacheDir, "back_${System.currentTimeMillis()}.mp4")
         frontTmpFile = File(cacheDir, "front_${System.currentTimeMillis()}.mp4")
-        backRecordingFinished = false
-        frontRecordingFinished = !cameraManager.isFrontVideoEnabled // If no front video, mark as done
 
         cameraManager.startRecording(backTmpFile!!, frontTmpFile!!) { event ->
             when (event) {
@@ -136,7 +217,6 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread { onRecordingStarted() }
                 }
                 is VideoRecordEvent.Finalize -> {
-                    backRecordingFinished = true
                     checkAndCombineVideos(event.hasError())
                 }
                 else -> {}
@@ -150,6 +230,8 @@ class MainActivity : AppCompatActivity() {
         binding.stopIcon.visibility = View.VISIBLE
         binding.modeToggle.visibility = View.GONE
         binding.timerText.visibility = View.VISIBLE
+        binding.swapButton.visibility = View.GONE
+        binding.screenModeHint.visibility = View.GONE
         recordingStartMs = System.currentTimeMillis()
         timerHandler.post(timerRunnable)
     }
@@ -161,6 +243,7 @@ class MainActivity : AppCompatActivity() {
         binding.timerText.visibility = View.GONE
         binding.modeToggle.visibility = View.VISIBLE
         updateCaptureButtonAppearance()
+        updateModeUI()
         binding.captureButton.isEnabled = false
     }
 
@@ -180,12 +263,17 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val uri = if (cameraManager.isFrontVideoEnabled && front != null && front.exists() && front.length() > 0) {
-                    VideoCompositor(this@MainActivity).compose(back, front) { progress ->
-                        // Could update a progress bar here
+                val frontValid = cameraManager.isFrontVideoEnabled &&
+                    front != null && front.exists() && front.length() > 0
+
+                val uri = if (frontValid) {
+                    val (mainFile, pipFile) = if (cameraManager.isSwapped) {
+                        Pair(front!!, back)
+                    } else {
+                        Pair(back, front!!)
                     }
+                    VideoCompositor(this@MainActivity).compose(mainFile, pipFile) {}
                 } else {
-                    // No front video: save back video directly to MediaStore
                     saveBackVideoOnly(back)
                 }
                 Toast.makeText(this@MainActivity, R.string.video_saved, Toast.LENGTH_SHORT).show()
@@ -194,6 +282,61 @@ class MainActivity : AppCompatActivity() {
             } finally {
                 back.delete()
                 front?.delete()
+                runOnUiThread {
+                    binding.processingOverlay.visibility = View.GONE
+                    binding.captureButton.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun startScreenCapture() {
+        if (!Settings.canDrawOverlays(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("オーバーレイ権限が必要です")
+                .setMessage("ゲームの上にカメラ映像を表示するために\n「他のアプリの上に重ねて表示」の権限が必要です。\n設定から許可してください。")
+                .setPositiveButton("設定を開く") { _, _ ->
+                    startActivity(Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    ))
+                }
+                .setNegativeButton("キャンセル", null)
+                .show()
+            return
+        }
+        val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
+    }
+
+    private fun stopScreenCapture() {
+        startService(Intent(this, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_STOP
+        })
+        isRecording = false
+        timerHandler.removeCallbacks(timerRunnable)
+        binding.timerText.visibility = View.GONE
+        binding.modeToggle.visibility = View.VISIBLE
+        updateCaptureButtonAppearance()
+        updateModeUI()
+        binding.captureButton.isEnabled = false
+    }
+
+    private fun composeScreenVideo(screenFile: File, frontFile: File) {
+        runOnUiThread { binding.processingOverlay.visibility = View.VISIBLE }
+        lifecycleScope.launch {
+            try {
+                if (frontFile.exists() && frontFile.length() > 0) {
+                    VideoCompositor(this@MainActivity).compose(screenFile, frontFile) {}
+                } else {
+                    saveBackVideoOnly(screenFile)
+                }
+                Toast.makeText(this@MainActivity, R.string.video_saved, Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "動画処理エラー: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                screenFile.delete()
+                frontFile.delete()
                 runOnUiThread {
                     binding.processingOverlay.visibility = View.GONE
                     binding.captureButton.isEnabled = true
@@ -227,7 +370,7 @@ class MainActivity : AppCompatActivity() {
         val tv = TextView(this).apply {
             text = message
             setPadding(48, 32, 48, 16)
-            setTextIsSelectable(true) // long-press to copy
+            setTextIsSelectable(true)
         }
         AlertDialog.Builder(this)
             .setTitle(title)
