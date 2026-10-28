@@ -75,8 +75,15 @@ class ScreenCaptureService : LifecycleService() {
     // Independent scope — not cancelled when lifecycle ends, so composition survives
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    override fun onCreate() {
+        super.onCreate()
+        toast("サービスonCreate到達")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+
+        toast("onStartCommand到達 action=${intent?.action}")
 
         if (intent?.action == ACTION_STOP) {
             stopCapture()
@@ -84,12 +91,20 @@ class ScreenCaptureService : LifecycleService() {
         }
 
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            startForeground(NOTIF_ID, buildNotification("スクリーン録画中"), type)
-        } else {
-            startForeground(NOTIF_ID, buildNotification("スクリーン録画中"))
+        toast("通知チャンネル作成済")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                startForeground(NOTIF_ID, buildNotification("スクリーン録画中"), type)
+            } else {
+                startForeground(NOTIF_ID, buildNotification("スクリーン録画中"))
+            }
+            toast("startForeground成功")
+        } catch (e: Exception) {
+            toast("startForeground失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         mediaProjection = pendingProjection ?: run {

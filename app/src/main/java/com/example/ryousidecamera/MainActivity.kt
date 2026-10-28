@@ -57,13 +57,22 @@ class MainActivity : AppCompatActivity() {
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        Toast.makeText(this, "resultCode=${result.resultCode} RESULT_OK=$RESULT_OK", Toast.LENGTH_LONG).show()
         if (result.resultCode == RESULT_OK && result.data != null) {
-            // Obtain MediaProjection in Activity immediately (Android 14+ requires this before service starts)
-            val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            ScreenCaptureService.pendingProjection = mpManager.getMediaProjection(result.resultCode, result.data!!)
-            ContextCompat.startForegroundService(this, Intent(this, ScreenCaptureService::class.java))
+            Toast.makeText(this, "許可取得 サービス起動中…", Toast.LENGTH_SHORT).show()
+            try {
+                val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                ScreenCaptureService.pendingProjection = mpManager.getMediaProjection(result.resultCode, result.data!!)
+                ContextCompat.startForegroundService(this, Intent(this, ScreenCaptureService::class.java))
+                Toast.makeText(this, "startForegroundService呼び出し完了", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "サービス起動エラー: ${e.javaClass.simpleName}: ${e.message?.take(60)}", Toast.LENGTH_LONG).show()
+                return@registerForActivityResult
+            }
             isRecording = true
             onRecordingStarted()
+        } else {
+            Toast.makeText(this, "権限が拒否されました (code=${result.resultCode})", Toast.LENGTH_LONG).show()
         }
     }
 
