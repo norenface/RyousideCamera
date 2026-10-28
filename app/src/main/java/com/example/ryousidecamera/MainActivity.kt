@@ -313,19 +313,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun startScreenCapture() {
         if (!Settings.canDrawOverlays(this)) {
+            // Warn but do NOT block — recording works via notification stop button
             AlertDialog.Builder(this)
-                .setTitle("オーバーレイ権限が必要です")
-                .setMessage("ゲームの上にカメラ映像を表示するために\n「他のアプリの上に重ねて表示」の権限が必要です。\n設定から許可してください。")
-                .setPositiveButton("設定を開く") { _, _ ->
+                .setTitle("オーバーレイ権限なし")
+                .setMessage(
+                    "「他のアプリの上に重ねて表示」権限がないため、ゲーム中にカメラ映像と停止ボタンが表示されません。\n\n" +
+                    "録画は通常通り行われます。停止するには通知バーの「停止」ボタンを使ってください。\n\n" +
+                    "今すぐ権限を設定しますか？"
+                )
+                .setPositiveButton("設定する") { _, _ ->
                     startActivity(Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:$packageName")
                     ))
                 }
-                .setNegativeButton("キャンセル", null)
+                .setNegativeButton("このまま録画") { _, _ ->
+                    launchScreenCapture()
+                }
                 .show()
             return
         }
+        launchScreenCapture()
+    }
+
+    private fun launchScreenCapture() {
         val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
     }
