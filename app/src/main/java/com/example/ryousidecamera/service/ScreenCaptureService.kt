@@ -117,6 +117,8 @@ class ScreenCaptureService : LifecycleService() {
         screenFile = File(cacheDir, "screen_${System.currentTimeMillis()}.mp4")
         frontFile = File(cacheDir, "front_${System.currentTimeMillis()}.mp4")
 
+        toast("録画サービス起動 (SDK ${Build.VERSION.SDK_INT})")
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             mediaProjection!!.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() { stopCapture() }
@@ -125,16 +127,20 @@ class ScreenCaptureService : LifecycleService() {
 
         try {
             showFloatingOverlay()
+            toast("オーバーレイ表示成功")
         } catch (e: Exception) {
             android.util.Log.e("ScreenCaptureService", "showFloatingOverlay failed: $e")
-            updateNotificationText("録画中（オーバーレイ非表示）通知の停止ボタンで終了")
+            toast("オーバーレイ失敗: ${e.javaClass.simpleName}: ${e.message?.take(40)}")
+            updateNotificationText("オーバーレイ失敗 通知の停止ボタンで録画終了")
         }
         var screenStarted = false
         try {
             startScreenRecording()
             screenStarted = true
+            toast("スクリーン録画開始")
         } catch (e: Exception) {
             android.util.Log.e("ScreenCaptureService", "Screen recording failed: $e")
+            toast("録画失敗: ${e.javaClass.simpleName}: ${e.message?.take(40)}")
             updateNotificationText("スクリーン録画失敗: ${e.javaClass.simpleName}")
         }
         if (screenStarted) {
@@ -321,6 +327,12 @@ class ScreenCaptureService : LifecycleService() {
                 doStopForeground()
                 stopSelf()
             }
+        }
+    }
+
+    private fun toast(msg: String) {
+        Handler(Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
