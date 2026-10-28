@@ -48,9 +48,13 @@ class ScreenCaptureService : LifecycleService() {
 
     companion object {
         const val ACTION_STOP = "stop"
+        const val ACTION_PREPARE = "prepare"
+        const val ACTION_START = "start"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val BROADCAST_DONE = "com.example.ryousidecamera.SCREEN_DONE"
+        const val BROADCAST_ERROR = "com.example.ryousidecamera.SCREEN_ERROR"
+        const val EXTRA_ERROR = "error"
         private const val NOTIF_ID = 2001
         private const val NOTIF_ID_DONE = 2002
         private const val CHANNEL_ID = "screen_capture_ch"
@@ -85,13 +89,45 @@ class ScreenCaptureService : LifecycleService() {
 
         toast("onStartCommand到達 action=${intent?.action}")
 
-        if (intent?.action == ACTION_STOP) {
-            stopCapture()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopCapture()
+                return START_NOT_STICKY
+            }
+            ACTION_PREPARE -> {
+                createNotificationChannel()
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(NOTIF_ID, buildNotification("録画準備中…"),
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+                    } else {
+                        startForeground(NOTIF_ID, buildNotification("録画準備中…"))
+                    }
+                    toast("startForeground (prepare) 成功")
+                } catch (e: Exception) {
+                    toast("startForeground (prepare) 失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
+                    broadcastError("${e.javaClass.name}\n${e.message ?: ""}")
+                    stopSelf()
+                }
+                return START_NOT_STICKY
+            }
+            ACTION_START -> {
+                mediaProjection = pendingProjection
+                pendingProjection = null
+                if (mediaProjection == null) {
+                    toast("mediaProjectionがnull")
+                    broadcastError("MediaProjectionがnullです")
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                startRecording()
+                return START_NOT_STICKY
+            }
+            else -> return START_NOT_STICKY
         }
+    }
 
-        createNotificationChannel()
-        toast("通知チャンネル作成済")
+    private fun startRecording() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
@@ -103,29 +139,9 @@ class ScreenCaptureService : LifecycleService() {
             toast("startForeground成功")
         } catch (e: Exception) {
             toast("startForeground失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
+            broadcastError("${e.javaClass.name}\n${e.message ?: ""}")
             stopSelf()
-            return START_NOT_STICKY
-        }
-
-        mediaProjection = pendingProjection ?: run {
-            val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: -1
-            val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent?.getParcelableExtra(EXTRA_RESULT_DATA)
-            }
-            if (resultCode != -1 && resultData != null) {
-                (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
-                    .getMediaProjection(resultCode, resultData)
-            } else null
-        }
-        pendingProjection = null
-
-        if (mediaProjection == null) {
-            android.util.Log.e("ScreenCaptureService", "MediaProjection is null, stopping")
-            stopSelf()
-            return START_NOT_STICKY
+            return
         }
 
         isRunning = true
@@ -161,8 +177,10 @@ class ScreenCaptureService : LifecycleService() {
         if (screenStarted) {
             startFrontCameraRecording()
         }
+    }
 
-        return START_NOT_STICKY
+    private fun broadcastError(message: String) {
+        sendBroadcast(Intent(BROADCAST_ERROR).putExtra(EXTRA_ERROR, message))
     }
 
     private fun startScreenRecording() {

@@ -57,22 +57,27 @@ class MainActivity : AppCompatActivity() {
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        Toast.makeText(this, "resultCode=${result.resultCode} RESULT_OK=$RESULT_OK", Toast.LENGTH_LONG).show()
         if (result.resultCode == RESULT_OK && result.data != null) {
-            Toast.makeText(this, "許可取得 サービス起動中…", Toast.LENGTH_SHORT).show()
             try {
                 val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 ScreenCaptureService.pendingProjection = mpManager.getMediaProjection(result.resultCode, result.data!!)
-                ContextCompat.startForegroundService(this, Intent(this, ScreenCaptureService::class.java))
-                Toast.makeText(this, "startForegroundService呼び出し完了", Toast.LENGTH_SHORT).show()
+                startService(Intent(this, ScreenCaptureService::class.java).apply {
+                    action = ScreenCaptureService.ACTION_START
+                })
             } catch (e: Exception) {
-                Toast.makeText(this, "サービス起動エラー: ${e.javaClass.simpleName}: ${e.message?.take(60)}", Toast.LENGTH_LONG).show()
+                showErrorDialog("録画エラー", "${e.javaClass.name}\n\n${e.message ?: "(詳細なし)"}")
+                startService(Intent(this, ScreenCaptureService::class.java).apply {
+                    action = ScreenCaptureService.ACTION_STOP
+                })
                 return@registerForActivityResult
             }
             isRecording = true
             onRecordingStarted()
         } else {
-            Toast.makeText(this, "権限が拒否されました (code=${result.resultCode})", Toast.LENGTH_LONG).show()
+            // User cancelled picker — stop the prepare-started service
+            startService(Intent(this, ScreenCaptureService::class.java).apply {
+                action = ScreenCaptureService.ACTION_STOP
+            })
         }
     }
 
@@ -82,6 +87,21 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 binding.processingOverlay.visibility = android.view.View.GONE
                 binding.captureButton.isEnabled = true
+            }
+        }
+    }
+
+    private val screenErrorReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val error = intent.getStringExtra(ScreenCaptureService.EXTRA_ERROR) ?: "不明なエラー"
+            isRecording = false
+            runOnUiThread {
+                binding.timerText.visibility = View.GONE
+                binding.modeToggle.visibility = View.VISIBLE
+                updateCaptureButtonAppearance()
+                updateModeUI()
+                binding.captureButton.isEnabled = true
+                showErrorDialog("録画エラー", error)
             }
         }
     }
@@ -99,6 +119,13 @@ class MainActivity : AppCompatActivity() {
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             registerReceiver(screenDoneReceiver, filter)
+        }
+        val errorFilter = IntentFilter(ScreenCaptureService.BROADCAST_ERROR)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenErrorReceiver, errorFilter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenErrorReceiver, errorFilter)
         }
 
         if (PermissionHelper.allGranted(this)) {
@@ -337,6 +364,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchScreenCapture() {
+        // Start the service while the activity is still in the foreground.
+        // On Android 14+, startForegroundService() from a background context throws
+        // ForegroundServiceStartNotAllowedException, so we must call it here before
+        // the screen capture picker brings another app to the foreground.
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, ScreenCaptureService::class.java).apply {
+                action = ScreenCaptureService.ACTION_PREPARE
+            })
+        } catch (e: Exception) {
+            showErrorDialog("サービス起動エラー", "${e.javaClass.name}\n\n${e.message ?: "(詳細なし)"}")
+            return
+        }
         val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
     }
@@ -376,16 +415,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showErrorDialog(title: String, message: String) {
-        val tv = TextView(this).apply {
-            text = message
-            setPadding(48, 32, 48, 16)
-            setTextIsSelectable(true)
+        if (isFinishing || isDestroyed) return
+        runOnUiThread {
+            val tv = TextView(this).apply {
+                text = message
+                setPadding(48, 32, 48, 16)
+                setTextIsSelectable(true)
+            }
+            AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(ScrollView(this).apply { addView(tv) })
+                .setPositiveButton("OK", null)
+                .show()
         }
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(ScrollView(this).apply { addView(tv) })
-            .setPositiveButton("OK", null)
-            .show()
     }
 
     override fun onRequestPermissionsResult(
@@ -408,6 +450,7 @@ class MainActivity : AppCompatActivity() {
         timerHandler.removeCallbacks(timerRunnable)
         cameraManager.release()
         unregisterReceiver(screenDoneReceiver)
+        unregisterReceiver(screenErrorReceiver)
     }
 
     companion object {
