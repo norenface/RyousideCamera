@@ -95,11 +95,15 @@ class ScreenCaptureService : LifecycleService() {
                 return START_NOT_STICKY
             }
             ACTION_PREPARE -> {
+                // Android 14+ requires FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION to be active
+                // BEFORE getMediaProjection() is called — start with both types here, while
+                // the activity is still in the foreground.
                 createNotificationChannel()
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(NOTIF_ID, buildNotification("録画準備中…"),
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+                        val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                        startForeground(NOTIF_ID, buildNotification("録画準備中…"), type)
                     } else {
                         startForeground(NOTIF_ID, buildNotification("録画準備中…"))
                     }
@@ -128,21 +132,9 @@ class ScreenCaptureService : LifecycleService() {
     }
 
     private fun startRecording() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                startForeground(NOTIF_ID, buildNotification("スクリーン録画中"), type)
-            } else {
-                startForeground(NOTIF_ID, buildNotification("スクリーン録画中"))
-            }
-            toast("startForeground成功")
-        } catch (e: Exception) {
-            toast("startForeground失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
-            broadcastError("${e.javaClass.name}\n${e.message ?: ""}")
-            stopSelf()
-            return
-        }
+        // Service is already foreground with both types (set in ACTION_PREPARE).
+        // Just update the notification text.
+        updateNotificationText("スクリーン録画中")
 
         isRunning = true
         screenFile = File(cacheDir, "screen_${System.currentTimeMillis()}.mp4")
