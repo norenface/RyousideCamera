@@ -7,5 +7,7 @@
         <item name="android:windowBackground">@color/black</item>
         <item name="android:statusBarColor">@color/black</item>
         <item name="android:navigationBarColor">@color/black</item>
+        <!-- Opt out of Android 15 (targetSdk 35) forced edge-to-edge; ignored on older OS -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 </resources>

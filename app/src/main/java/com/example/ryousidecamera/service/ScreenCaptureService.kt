@@ -142,11 +142,11 @@ class ScreenCaptureService : LifecycleService() {
 
         toast("録画サービス起動 (SDK ${Build.VERSION.SDK_INT})")
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            mediaProjection!!.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() { stopCapture() }
-            }, Handler(Looper.getMainLooper()))
-        }
+        // Register on all API levels (minSdk 24) so the system stopping the projection
+        // (e.g. user revokes access, Android 14+ auto-revoke) always triggers cleanup.
+        mediaProjection!!.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() { stopCapture() }
+        }, Handler(Looper.getMainLooper()))
 
         try {
             showFloatingOverlay()
