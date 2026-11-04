@@ -58,27 +58,26 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
+            // Activity Result callbacks are exempt from Android 12+ background
+            // foreground-service start restrictions. We start the service here (not
+            // before the picker) so Android 15 recognises the service as having been
+            // started in the same session as the user's consent.
             try {
-                val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                ScreenCaptureService.pendingProjection = mpManager.getMediaProjection(result.resultCode, result.data!!)
-                startService(Intent(this, ScreenCaptureService::class.java).apply {
-                    action = ScreenCaptureService.ACTION_START
-                })
+                ContextCompat.startForegroundService(this,
+                    Intent(this, ScreenCaptureService::class.java).apply {
+                        action = ScreenCaptureService.ACTION_START
+                        putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                        putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
+                    }
+                )
             } catch (e: Exception) {
                 showErrorDialog("録画エラー", "${e.javaClass.name}\n\n${e.message ?: "(詳細なし)"}")
-                startService(Intent(this, ScreenCaptureService::class.java).apply {
-                    action = ScreenCaptureService.ACTION_STOP
-                })
                 return@registerForActivityResult
             }
             isRecording = true
             onRecordingStarted()
-        } else {
-            // User cancelled picker — stop the prepare-started service
-            startService(Intent(this, ScreenCaptureService::class.java).apply {
-                action = ScreenCaptureService.ACTION_STOP
-            })
         }
+        // User cancelled — nothing was started, nothing to clean up
     }
 
     private val screenDoneReceiver = object : BroadcastReceiver() {
@@ -364,18 +363,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchScreenCapture() {
-        // Start the service while the activity is still in the foreground.
-        // On Android 14+, startForegroundService() from a background context throws
-        // ForegroundServiceStartNotAllowedException, so we must call it here before
-        // the screen capture picker brings another app to the foreground.
-        try {
-            ContextCompat.startForegroundService(this, Intent(this, ScreenCaptureService::class.java).apply {
-                action = ScreenCaptureService.ACTION_PREPARE
-            })
-        } catch (e: Exception) {
-            showErrorDialog("サービス起動エラー", "${e.javaClass.name}\n\n${e.message ?: "(詳細なし)"}")
-            return
-        }
         val mpManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
     }
