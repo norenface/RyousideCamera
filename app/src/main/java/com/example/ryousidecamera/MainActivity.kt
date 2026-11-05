@@ -138,6 +138,21 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Restore video recording UI if the activity returns from background mid-recording.
+        // The modeToggle listener can fire on resume and reset stopIcon/captureButton state.
+        if (isRecording && captureMode == CaptureMode.VIDEO) {
+            binding.photoBg.visibility = View.GONE
+            binding.recordBg.visibility = View.VISIBLE
+            binding.stopIcon.visibility = View.VISIBLE
+            binding.modeToggle.visibility = View.GONE
+            binding.timerText.visibility = View.VISIBLE
+            binding.swapButton.visibility = View.GONE
+            binding.screenModeHint.visibility = View.GONE
+            binding.captureButton.isEnabled = true
+            binding.processingOverlay.visibility = View.GONE
+            timerHandler.removeCallbacks(timerRunnable)
+            timerHandler.post(timerRunnable)
+        }
         // If the activity was recreated while screen recording was running, restore UI
         if (ScreenCaptureService.isRunning && !isRecording) {
             isRecording = true
