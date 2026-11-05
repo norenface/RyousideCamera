@@ -48,6 +48,7 @@ class ScreenCaptureService : LifecycleService() {
 
     companion object {
         const val ACTION_STOP = "stop"
+        const val ACTION_PREPARE = "prepare"
         const val ACTION_START = "start"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
@@ -57,6 +58,7 @@ class ScreenCaptureService : LifecycleService() {
         private const val NOTIF_ID = 2001
         private const val NOTIF_ID_DONE = 2002
         private const val CHANNEL_ID = "screen_capture_ch"
+        var pendingProjection: MediaProjection? = null
         // Checked by MainActivity.onResume() to restore UI after activity recreation
         @Volatile var isRunning = false
     }
@@ -92,58 +94,36 @@ class ScreenCaptureService : LifecycleService() {
                 stopCapture()
                 return START_NOT_STICKY
             }
-            ACTION_START -> {
-                // The Activity Result callback (where startForegroundService is called) is
-                // exempt from Android 12+ background start restrictions. Here in the service
-                // we immediately call startForeground() with MEDIA_PROJECTION + CAMERA types,
-                // then call getMediaProjection() — which requires that foreground type to be
-                // active (Android 14+ requirement).
-                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
-                val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
-                }
-
+            ACTION_PREPARE -> {
+                // Android 14+ requires FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION to be active
+                // BEFORE getMediaProjection() is called — start with both types here, while
+                // the activity is still in the foreground.
                 createNotificationChannel()
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
                             ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                        startForeground(NOTIF_ID, buildNotification("スクリーン録画中"), type)
+                        startForeground(NOTIF_ID, buildNotification("録画準備中…"), type)
                     } else {
-                        startForeground(NOTIF_ID, buildNotification("スクリーン録画中"))
+                        startForeground(NOTIF_ID, buildNotification("録画準備中…"))
                     }
-                    toast("startForeground成功")
+                    toast("startForeground (prepare) 成功")
                 } catch (e: Exception) {
-                    toast("startForeground失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
+                    toast("startForeground (prepare) 失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
                     broadcastError("${e.javaClass.name}\n${e.message ?: ""}")
                     stopSelf()
-                    return START_NOT_STICKY
                 }
-
-                try {
-                    if (resultCode != -1 && resultData != null) {
-                        mediaProjection = (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
-                            .getMediaProjection(resultCode, resultData)
-                    }
-                } catch (e: Exception) {
-                    toast("getMediaProjection失敗: ${e.javaClass.simpleName}: ${e.message?.take(60)}")
-                    broadcastError("${e.javaClass.name}\n${e.message ?: ""}")
-                    doStopForeground()
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-
+                return START_NOT_STICKY
+            }
+            ACTION_START -> {
+                mediaProjection = pendingProjection
+                pendingProjection = null
                 if (mediaProjection == null) {
                     toast("mediaProjectionがnull")
                     broadcastError("MediaProjectionがnullです")
-                    doStopForeground()
                     stopSelf()
                     return START_NOT_STICKY
                 }
-
                 startRecording()
                 return START_NOT_STICKY
             }
@@ -152,6 +132,9 @@ class ScreenCaptureService : LifecycleService() {
     }
 
     private fun startRecording() {
+        // Service is already foreground with both types (set in ACTION_PREPARE).
+        // Just update the notification text.
+        updateNotificationText("スクリーン録画中")
 
         isRunning = true
         screenFile = File(cacheDir, "screen_${System.currentTimeMillis()}.mp4")
