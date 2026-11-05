@@ -353,9 +353,16 @@ class MainActivity : AppCompatActivity() {
         }
         val front = frontTmpFile
 
-        runOnUiThread { binding.processingOverlay.visibility = View.VISIBLE }
-
         lifecycleScope.launch {
+            // Rebind cameras immediately so preview is live while composition runs in background
+            cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
+            runOnUiThread {
+                updateModeUI()
+                if (!cameraManager.isConcurrentMode) binding.pipPlaceholder.visibility = View.VISIBLE
+                binding.captureButton.isEnabled = true
+                binding.processingOverlay.visibility = View.VISIBLE
+            }
+
             try {
                 val frontValid = cameraManager.isFrontVideoEnabled &&
                     front != null && front.exists() && front.length() > 0
@@ -378,15 +385,6 @@ class MainActivity : AppCompatActivity() {
                 front?.delete()
                 runOnUiThread {
                     binding.processingOverlay.visibility = View.GONE
-                    binding.captureButton.isEnabled = true
-                }
-                // Rebind cameras to clear any post-recording black preview
-                cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
-                runOnUiThread {
-                    updateModeUI()
-                    if (!cameraManager.isConcurrentMode) {
-                        binding.pipPlaceholder.visibility = View.VISIBLE
-                    }
                 }
             }
         }
