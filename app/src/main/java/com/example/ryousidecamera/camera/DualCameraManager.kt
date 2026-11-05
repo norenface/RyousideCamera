@@ -327,6 +327,15 @@ class DualCameraManager(private val context: Context) {
         return wasActive
     }
 
+    /** Re-attach surface providers to existing Preview use cases without unbinding.
+     *  Call on onResume when recording is active to restore a black preview. */
+    fun reattachSurfaceProviders() {
+        val bpv = backPreviewView ?: return
+        val fpv = frontPreviewView ?: return
+        backPreview?.setSurfaceProvider(if (isSwapped) fpv.surfaceProvider else bpv.surfaceProvider)
+        frontPreview?.setSurfaceProvider(if (isSwapped) bpv.surfaceProvider else fpv.surfaceProvider)
+    }
+
     fun release() {
         cameraProvider?.unbindAll()
     }

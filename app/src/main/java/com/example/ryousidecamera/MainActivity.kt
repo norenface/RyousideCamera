@@ -166,6 +166,8 @@ class MainActivity : AppCompatActivity() {
             binding.processingOverlay.visibility = View.GONE
             timerHandler.removeCallbacks(timerRunnable)
             timerHandler.post(timerRunnable)
+            // Re-attach surface providers in case CameraX preview surface was lost in background
+            cameraManager.reattachSurfaceProviders()
         }
         // If the activity was recreated while screen recording was running, restore UI
         if (ScreenCaptureService.isRunning && !isRecording) {
@@ -344,6 +346,13 @@ class MainActivity : AppCompatActivity() {
                 binding.captureButton.isEnabled = true
                 Toast.makeText(this, "録画エラーが発生しました", Toast.LENGTH_SHORT).show()
             }
+            lifecycleScope.launch {
+                cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
+                runOnUiThread {
+                    updateModeUI()
+                    if (!cameraManager.isConcurrentMode) binding.pipPlaceholder.visibility = View.VISIBLE
+                }
+            }
             return
         }
 
@@ -360,7 +369,8 @@ class MainActivity : AppCompatActivity() {
                 updateModeUI()
                 if (!cameraManager.isConcurrentMode) binding.pipPlaceholder.visibility = View.VISIBLE
                 binding.captureButton.isEnabled = true
-                binding.processingOverlay.visibility = View.VISIBLE
+                // No processingOverlay here — composition runs silently in background
+                // so the user can start a new recording right away
             }
 
             try {
@@ -383,9 +393,6 @@ class MainActivity : AppCompatActivity() {
             } finally {
                 back.delete()
                 front?.delete()
-                runOnUiThread {
-                    binding.processingOverlay.visibility = View.GONE
-                }
             }
         }
     }
