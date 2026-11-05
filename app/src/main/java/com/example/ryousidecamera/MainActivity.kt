@@ -352,7 +352,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val notificationPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> launchScreenCaptureWithOverlayCheck() }
+
     private fun startScreenCapture() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !PermissionHelper.hasNotificationPermission(this)) {
+            notificationPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        launchScreenCaptureWithOverlayCheck()
+    }
+
+    private fun launchScreenCaptureWithOverlayCheck() {
         if (!Settings.canDrawOverlays(this)) {
             // Warn but do NOT block — recording works via notification stop button
             AlertDialog.Builder(this)
