@@ -241,8 +241,8 @@ class ScreenCaptureService : LifecycleService() {
         ).coerceAtLeast((24 * density).toInt())
 
         floatingParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            (120 * density).toInt(),
+            (160 * density).toInt(),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
