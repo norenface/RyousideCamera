@@ -241,8 +241,8 @@ class ScreenCaptureService : LifecycleService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = 16
-            y = 200
+            x = 8
+            y = 48
         }
 
         floatingView!!.setOnTouchListener(object : View.OnTouchListener {
