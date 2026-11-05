@@ -248,8 +248,8 @@ class ScreenCaptureService : LifecycleService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = (8 * density).toInt()
-            y = statusBarPx + (8 * density).toInt()
+            x = (12 * density).toInt()
+            y = statusBarPx + (12 * density).toInt()
         }
 
         floatingView!!.setOnTouchListener(object : View.OnTouchListener {
