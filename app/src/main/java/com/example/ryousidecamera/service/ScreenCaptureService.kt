@@ -123,8 +123,10 @@ class ScreenCaptureService : LifecycleService() {
                     return START_NOT_STICKY
                 }
 
+                // Activity.RESULT_OK == -1 on Android; use resultData null-check as the guard
+                // (the activity already verified resultCode == RESULT_OK before sending ACTION_START)
                 try {
-                    if (resultCode != -1 && resultData != null) {
+                    if (resultData != null) {
                         mediaProjection = (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
                             .getMediaProjection(resultCode, resultData)
                     }
