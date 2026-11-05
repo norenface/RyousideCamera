@@ -35,6 +35,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import com.example.ryousidecamera.R
+import com.example.ryousidecamera.media.AudioMixer
 import com.example.ryousidecamera.media.VideoCompositor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +73,7 @@ class ScreenCaptureService : LifecycleService() {
 
     private var screenFile: File? = null
     private var frontFile: File? = null
+    private var audioMixer: AudioMixer? = null
     private var stopped = false
 
     // Independent scope — not cancelled when lifecycle ends, so composition survives
@@ -109,8 +111,11 @@ class ScreenCaptureService : LifecycleService() {
                 createNotificationChannel()
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
                             ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                        }
                         startForeground(NOTIF_ID, buildNotification("スクリーン録画中"), type)
                     } else {
                         startForeground(NOTIF_ID, buildNotification("スクリーン録画中"))
@@ -186,6 +191,13 @@ class ScreenCaptureService : LifecycleService() {
             updateNotificationText("スクリーン録画失敗: ${e.javaClass.simpleName}")
         }
         if (screenStarted) {
+            try {
+                audioMixer = AudioMixer(this, mediaProjection!!)
+                audioMixer!!.start(File(cacheDir, "audio_${System.currentTimeMillis()}.pcm"))
+            } catch (e: Exception) {
+                android.util.Log.w("ScreenCaptureService", "AudioMixer start failed: $e")
+                audioMixer = null
+            }
             startFrontCameraRecording()
         }
     }
@@ -207,13 +219,12 @@ class ScreenCaptureService : LifecycleService() {
             MediaRecorder()
         }
 
+        // Audio is captured separately by AudioMixer (MIC + internal app audio mixed)
         screenRecorder!!.apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
             setVideoSource(MediaRecorder.VideoSource.SURFACE)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setOutputFile(screenFile!!.absolutePath)
             setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             setVideoSize(width, height)
             setVideoFrameRate(30)
             setVideoEncodingBitRate(5_000_000)
@@ -326,6 +337,10 @@ class ScreenCaptureService : LifecycleService() {
         screenRecorder?.release()
         screenRecorder = null
 
+        audioMixer?.stop()
+        val am = audioMixer
+        audioMixer = null
+
         virtualDisplay?.release()
         virtualDisplay = null
 
@@ -359,17 +374,23 @@ class ScreenCaptureService : LifecycleService() {
         // Composition runs in serviceScope (independent of lifecycle) so it survives
         // even if onDestroy fires before composition finishes
         serviceScope.launch {
+            // Encode mixed PCM (MIC + internal audio) and remux with screen video.
+            // Falls back to original sf when audio capture failed or produced no data.
+            var screenWithAudio = sf
             try {
+                screenWithAudio = withContext(Dispatchers.IO) { am?.encodeAndRemux(sf) ?: sf }
+
                 if (ff != null && ff.exists() && ff.length() > 0) {
-                    VideoCompositor(this@ScreenCaptureService).compose(sf, ff) {}
+                    VideoCompositor(this@ScreenCaptureService).compose(screenWithAudio, ff) {}
                 } else {
-                    withContext(Dispatchers.IO) { saveVideoOnly(sf) }
+                    withContext(Dispatchers.IO) { saveVideoOnly(screenWithAudio) }
                 }
                 showDoneNotification()
             } catch (e: Exception) {
                 android.util.Log.e("ScreenCaptureService", "Composition failed: $e")
             } finally {
-                sf.delete()
+                if (screenWithAudio != sf) sf.delete()
+                screenWithAudio.delete()
                 ff?.delete()
                 // Notify MainActivity to reset UI (best-effort; activity may be gone)
                 sendBroadcast(Intent(BROADCAST_DONE))
@@ -467,6 +488,8 @@ class ScreenCaptureService : LifecycleService() {
             mediaProjection?.stop()
             cameraProvider?.unbindAll()
             try { floatingView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
+            try { audioMixer?.cleanup() } catch (_: Exception) {}
+            audioMixer = null
             screenFile?.delete()
             frontFile?.delete()
             serviceScope.cancel()
