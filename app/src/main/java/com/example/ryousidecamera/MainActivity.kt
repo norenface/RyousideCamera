@@ -82,10 +82,24 @@ class MainActivity : AppCompatActivity() {
 
     private val screenDoneReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            // Composition is handled by ScreenCaptureService; just reset UI here
+            isRecording = false
             runOnUiThread {
-                binding.processingOverlay.visibility = android.view.View.GONE
+                timerHandler.removeCallbacks(timerRunnable)
+                binding.timerText.visibility = View.GONE
+                binding.modeToggle.visibility = View.VISIBLE
+                updateCaptureButtonAppearance()
+                updateModeUI()
+                binding.processingOverlay.visibility = View.GONE
                 binding.captureButton.isEnabled = true
+            }
+            // Restart cameras so they're ready immediately when user switches to photo/video mode.
+            // (Cameras were released when entering screen mode.)
+            this@MainActivity.lifecycleScope.launch {
+                cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
+                runOnUiThread {
+                    updateModeUI()
+                    if (!cameraManager.isConcurrentMode) binding.pipPlaceholder.visibility = View.VISIBLE
+                }
             }
         }
     }
