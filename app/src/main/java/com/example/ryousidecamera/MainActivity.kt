@@ -299,17 +299,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopVideoRecording() {
-        cameraManager.stopRecording()
+        val wasActive = cameraManager.stopRecording()
         isRecording = false
         timerHandler.removeCallbacks(timerRunnable)
         binding.timerText.visibility = View.GONE
         binding.modeToggle.visibility = View.VISIBLE
         updateCaptureButtonAppearance()
         updateModeUI()
-        binding.captureButton.isEnabled = false
+        // Only disable while waiting for Finalize; if recording already stopped,
+        // Finalize won't fire again so re-enable immediately.
+        binding.captureButton.isEnabled = !wasActive
     }
 
     private fun checkAndCombineVideos(hasError: Boolean) {
+        // Always reset recording state — covers both explicit stop (already false)
+        // and CameraX auto-stopping recording on lifecycle (isRecording still true).
+        if (isRecording) {
+            isRecording = false
+            timerHandler.removeCallbacks(timerRunnable)
+            runOnUiThread {
+                binding.timerText.visibility = View.GONE
+                binding.modeToggle.visibility = View.VISIBLE
+                updateCaptureButtonAppearance()
+                updateModeUI()
+            }
+        }
+
         if (hasError) {
             runOnUiThread {
                 binding.captureButton.isEnabled = true
@@ -318,7 +333,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val back = backTmpFile ?: return
+        val back = backTmpFile ?: run {
+            runOnUiThread { binding.captureButton.isEnabled = true }
+            return
+        }
         val front = frontTmpFile
 
         runOnUiThread { binding.processingOverlay.visibility = View.VISIBLE }
@@ -328,7 +346,7 @@ class MainActivity : AppCompatActivity() {
                 val frontValid = cameraManager.isFrontVideoEnabled &&
                     front != null && front.exists() && front.length() > 0
 
-                val uri = if (frontValid) {
+                if (frontValid) {
                     val (mainFile, pipFile) = if (cameraManager.isSwapped) {
                         Pair(front!!, back)
                     } else {
@@ -347,6 +365,14 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     binding.processingOverlay.visibility = View.GONE
                     binding.captureButton.isEnabled = true
+                }
+                // Rebind cameras to clear any post-recording black preview
+                cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
+                runOnUiThread {
+                    updateModeUI()
+                    if (!cameraManager.isConcurrentMode) {
+                        binding.pipPlaceholder.visibility = View.VISIBLE
+                    }
                 }
             }
         }

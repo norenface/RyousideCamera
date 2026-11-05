@@ -235,6 +235,11 @@ class ScreenCaptureService : LifecycleService() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_camera, null)
 
+        val density = resources.displayMetrics.density
+        val statusBarPx = resources.getDimensionPixelSize(
+            resources.getIdentifier("status_bar_height", "dimen", "android")
+        ).coerceAtLeast((24 * density).toInt())
+
         floatingParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -243,8 +248,8 @@ class ScreenCaptureService : LifecycleService() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = 8
-            y = 48
+            x = (8 * density).toInt()
+            y = statusBarPx + (8 * density).toInt()
         }
 
         floatingView!!.setOnTouchListener(object : View.OnTouchListener {

@@ -317,11 +317,14 @@ class DualCameraManager(private val context: Context) {
         }
     }
 
-    fun stopRecording() {
+    /** Returns true if a recording was actually active (and stopped), false if already stopped. */
+    fun stopRecording(): Boolean {
+        val wasActive = backRecording != null
         backRecording?.stop()
         frontRecording?.stop()
         backRecording = null
         frontRecording = null
+        return wasActive
     }
 
     fun release() {
