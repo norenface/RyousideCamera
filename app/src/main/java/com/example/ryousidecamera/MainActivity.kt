@@ -278,6 +278,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun takePhoto() {
         binding.captureButton.isEnabled = false
+        binding.processingText.setText(R.string.photo_processing)
         binding.processingOverlay.visibility = View.VISIBLE
         lifecycleScope.launch {
             try {
@@ -378,14 +379,15 @@ class MainActivity : AppCompatActivity() {
         val front = frontTmpFile
 
         lifecycleScope.launch {
-            // Rebind cameras immediately so preview is live while composition runs in background
+            // Rebind cameras first so preview is live while composition runs in background
             cameraManager.startCamera(this@MainActivity, binding.previewBack, binding.previewFront)
             runOnUiThread {
                 updateModeUI()
                 if (!cameraManager.isConcurrentMode) binding.pipPlaceholder.visibility = View.VISIBLE
                 binding.captureButton.isEnabled = true
-                // No processingOverlay here — composition runs silently in background
-                // so the user can start a new recording right away
+                // Show "動画を結合中…" overlay — clickable=false so user can still tap capture
+                binding.processingText.setText(R.string.processing)
+                binding.processingOverlay.visibility = View.VISIBLE
             }
 
             try {
@@ -408,6 +410,7 @@ class MainActivity : AppCompatActivity() {
             } finally {
                 back.delete()
                 front?.delete()
+                runOnUiThread { binding.processingOverlay.visibility = View.GONE }
             }
         }
     }
