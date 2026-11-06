@@ -192,6 +192,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        // CameraX finalizes recordings when the lifecycle owner is stopped, but Finalize may
+        // arrive after onResume — leaving the timer running and preview black on return.
+        // Explicitly request stop here so Finalize fires while we are still in background,
+        // giving checkAndCombineVideos time to clean up before the user returns.
+        if (isRecording && captureMode == CaptureMode.VIDEO) {
+            stopVideoRecording()
+        }
     }
 
     private fun setupUI() {
