@@ -15,7 +15,8 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:scaleType="fillCenter" />
+        app:scaleType="fillCenter"
+        app:implementationMode="compatible" />
 
     <!-- Front camera: PiP overlay (top-right) -->
     <FrameLayout
@@ -31,7 +32,8 @@
             android:id="@+id/previewFront"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            app:scaleType="fillCenter" />
+            app:scaleType="fillCenter"
+            app:implementationMode="compatible" />
 
         <View
             android:layout_width="match_parent"

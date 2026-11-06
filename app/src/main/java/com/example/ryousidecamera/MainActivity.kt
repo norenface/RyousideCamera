@@ -176,6 +176,14 @@ class MainActivity : AppCompatActivity() {
             binding.modeToggle.check(R.id.screenModeButton)
             onRecordingStarted()
         }
+
+        // Restart cameras when returning from background while NOT recording.
+        // This covers cases where CameraX released cameras on onStop (stopped recording,
+        // ended screen capture, etc.) and the preview would otherwise stay black.
+        // Guard: skip if button is disabled (takePhoto or Finalize processing is in progress).
+        if (!isRecording && captureMode != CaptureMode.SCREEN && binding.captureButton.isEnabled) {
+            startCamera()
+        }
     }
 
     override fun onStart() {
