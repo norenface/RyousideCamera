@@ -174,20 +174,18 @@
 
     </FrameLayout>
 
-    <!-- Processing overlay (clickable=false so touches pass through to captureButton) -->
+    <!-- Processing overlay: height constrained to above captureButton so the button is never covered -->
     <LinearLayout
         android:id="@+id/processingOverlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
         android:orientation="vertical"
         android:gravity="center"
         android:background="#CC000000"
         android:visibility="gone"
-        android:clickable="false"
-        android:focusable="false"
-        android:elevation="16dp"
+        android:elevation="8dp"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/captureButton"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
