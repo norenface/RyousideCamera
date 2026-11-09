@@ -436,7 +436,7 @@ class ScreenCaptureService : LifecycleService() {
             put(MediaStore.Video.Media.DISPLAY_NAME, "RyousideCamera_${System.currentTimeMillis()}.mp4")
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/RyousideCamera")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Camera")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
         }

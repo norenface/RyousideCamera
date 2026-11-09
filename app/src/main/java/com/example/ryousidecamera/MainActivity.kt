@@ -477,7 +477,7 @@ class MainActivity : AppCompatActivity() {
                 "RyousideCamera_${System.currentTimeMillis()}.mp4")
             put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/RyousideCamera")
+                put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "DCIM/Camera")
                 put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
             }
         }
